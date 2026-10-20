@@ -29,6 +29,7 @@
 #include "dao/ClientExoApp.h"
 #include "dao/Frame.h"
 #include "dao/Log.h"
+#include "dao/Messages.h"
 #include "dao/Objects.h"
 #include "dao/Orders.h"
 #include "dao/Party.h"
@@ -101,6 +102,19 @@ std::uint64_t g_nextLoadTryFrame = 0;
 // The host save uses a slot of its own, well away from the player's.
 constexpr std::int32_t kHandoffSlot = 91;
 constexpr std::uint64_t kHandoffDelayFrames = 480; // about eight seconds in the world
+
+// Milestone 4: two avatars. The host creates a companion and adds it to the
+// party before the handoff save; the guest loads that save, so both games have
+// the same second party member with the same id. The guest then selects party
+// index 1 and each side mirrors the other's controlled creature.
+bool g_addCompanion = false;
+bool g_companionDone = false;
+int g_selectParty = -1;
+bool g_selected = false;
+std::uint64_t g_worldStartFrame = 0;
+dao::ObjectId g_puppetId = dao::kInvalidObject;
+std::uint64_t g_puppetApplied = 0;
+float g_puppetDistance = 0.0F;
 
 // Reads an environment variable without the deprecated getenv (/W4 /WX at
 // DAOLib's settings treats its warning as an error).
@@ -414,6 +428,113 @@ void TryGuestJoin()
     }
 }
 
+// Milestone 4 host: create a mabari next to the player and add it to the
+// party before the handoff save, so the guest loads a world with two party
+// members (and the same ids) and can control the second one.
+void AddCompanion()
+{
+    if (!g_addCompanion || g_companionDone)
+    {
+        return;
+    }
+    dao::CClientExoApp *app = dao::CClientExoApp::Get();
+    if (app == nullptr)
+    {
+        return;
+    }
+    const dao::ObjectId player = dao::party::Controlled();
+    if (player == dao::kInvalidObject)
+    {
+        return;
+    }
+    const dao::CCObject *creature = app->GetObjectById(player);
+    if (creature == nullptr)
+    {
+        return;
+    }
+    const dao::Vector position = creature->Position();
+    dao::CScriptLocation location{};
+    location.position.x = position.x + 1.5F;
+    location.position.y = position.y;
+    location.position.z = position.z;
+    location.area = creature->AreaId();
+    const dao::Resource resource{L"gen00fl_dog.utc"};
+    const dao::ObjectId dog =
+        dao::script::api::CreateObject(dao::script::constants::OBJECT_TYPE_CREATURE, resource, location);
+    g_companionDone = true;
+    if (dog == dao::kInvalidObject)
+    {
+        spdlog::warn("companion: the game made no creature from gen00fl_dog.utc");
+        return;
+    }
+    // AddToParty(creature, player): pops two objects, ignores the second.
+    const bool hired = dao::script::Invoke<void>(396, dog, dao::kInvalidObject);
+    const dao::script::Array party = dao::script::api::GetPartyList(dao::kInvalidObject);
+    spdlog::info("companion: created 0x{:08x} beside the player, AddToParty {}, party list {} member(s)", dog, hired,
+                 party.Size());
+}
+
+// Milestone 4 guest: take control of another party member (index n) through the
+// same message the party bar sends. Its second field is how the key behaves:
+// with the add-to-selection key held the message adds to the selection, and
+// control follows the selection's first entry. So first try a plain click
+// (second field 0, replacing the selection); if that leaves control where it
+// was, fall back to toggling the old first member off and adding the new one.
+int g_selectPhase = 0;
+std::uint64_t g_selectPhaseFrame = 0;
+
+void SendPartyIndex(const char *why, int index, int add)
+{
+    const std::wstring text =
+        L"SelectPartyMemberIndexMessage " + std::to_wstring(index) + L" " + std::to_wstring(add);
+    const bool sent = dao::messages::SendBinding(text);
+    spdlog::info("select: {} index {} field {} ({})", why, index, add, sent ? "message sent" : "message not sent");
+}
+
+void SelectPartyMember()
+{
+    if (g_selectParty < 0 || g_selected)
+    {
+        return;
+    }
+    const dao::script::Array party = dao::script::api::GetPartyList(dao::kInvalidObject);
+    if (party.Size() <= static_cast<std::size_t>(g_selectParty))
+    {
+        return;
+    }
+    const std::uint64_t frame = dao::FrameCount();
+    if (g_selectPhase == 0)
+    {
+        SendPartyIndex("asking for a click on", g_selectParty, 0);
+        g_selectPhase = 1;
+        g_selectPhaseFrame = frame;
+        return;
+    }
+    if (g_selectPhase == 1 && frame - g_selectPhaseFrame > 120)
+    {
+        const dao::ObjectId wanted = party.Object(static_cast<std::size_t>(g_selectParty));
+        const dao::ObjectId now = dao::party::Controlled();
+        spdlog::info("select: after the click, controlled 0x{:08x} (wanted 0x{:08x})", now, wanted);
+        if (now == wanted)
+        {
+            g_selected = true;
+            return;
+        }
+        SendPartyIndex("toggling off", 0, 1);
+        SendPartyIndex("adding", g_selectParty, 1);
+        g_selectPhase = 2;
+        g_selectPhaseFrame = frame;
+        return;
+    }
+    if (g_selectPhase == 2 && frame - g_selectPhaseFrame > 120)
+    {
+        const dao::ObjectId wanted = party.Object(static_cast<std::size_t>(g_selectParty));
+        const dao::ObjectId now = dao::party::Controlled();
+        spdlog::info("select: after the toggle, controlled 0x{:08x} (wanted 0x{:08x})", now, wanted);
+        g_selected = true;
+    }
+}
+
 // Milestone 2: one frame's worth of co-op.
 //  - both roles send their controlled creature's state about 20 times a second
 //  - both drain the socket every frame
@@ -470,26 +591,55 @@ void NetFrame()
         g_anchorSet = true;
     }
 
-    // Guest: apply the host's word.
-    if (g_role == Role::Guest && g_haveRemote && g_remote.objectId == controlled &&
-        g_remote.areaId == local->AreaId())
+    // Apply the other player's creature. With two avatars the remote id is a
+    // different party member, and each side mirrors the other player's puppet;
+    // in the one-avatar tests both sides control the same creature, and only
+    // the guest follows the host's word.
+    if (g_haveRemote && g_remote.areaId == local->AreaId() && g_remote.objectId != dao::kInvalidObject)
     {
-        const float dx = g_remote.x - localPosition.x;
-        const float dy = g_remote.y - localPosition.y;
-        const float dz = g_remote.z - localPosition.z;
-        if (std::sqrt((dx * dx) + (dy * dy) + (dz * dz)) > kApplyTolerance)
+        if (g_remote.objectId != controlled)
         {
-            dao::Vector target{};
-            target.x = g_remote.x;
-            target.y = g_remote.y;
-            target.z = g_remote.z;
-            dao::script::api::SetPosition(controlled, target);
-            ++g_applied;
+            const dao::CCCreature *puppet = app->GetCreatureById(g_remote.objectId);
+            if (puppet != nullptr)
+            {
+                const dao::Vector puppetPosition = puppet->Position();
+                const float dx = g_remote.x - puppetPosition.x;
+                const float dy = g_remote.y - puppetPosition.y;
+                const float dz = g_remote.z - puppetPosition.z;
+                const float distance = std::sqrt((dx * dx) + (dy * dy) + (dz * dz));
+                g_puppetId = g_remote.objectId;
+                g_puppetDistance = distance;
+                if (distance > kApplyTolerance)
+                {
+                    dao::Vector target{};
+                    target.x = g_remote.x;
+                    target.y = g_remote.y;
+                    target.z = g_remote.z;
+                    dao::script::api::SetPosition(g_remote.objectId, target);
+                    ++g_puppetApplied;
+                }
+            }
+        }
+        else if (g_role == Role::Guest)
+        {
+            const float dx = g_remote.x - localPosition.x;
+            const float dy = g_remote.y - localPosition.y;
+            const float dz = g_remote.z - localPosition.z;
+            if (std::sqrt((dx * dx) + (dy * dy) + (dz * dz)) > kApplyTolerance)
+            {
+                dao::Vector target{};
+                target.x = g_remote.x;
+                target.y = g_remote.y;
+                target.z = g_remote.z;
+                dao::script::api::SetPosition(controlled, target);
+                ++g_applied;
+            }
         }
     }
 
-    // Host: walk between waypoints on a circle around the anchor, for tests.
-    if (g_role == Role::Host && g_drive && dao::FrameCount() % kFramesBetweenMoves == 0)
+    // Either player can drive their own creature for tests (host by default,
+    // the guest once it has selected its own party member).
+    if (g_drive && dao::FrameCount() % kFramesBetweenMoves == 0)
     {
         const float angle = static_cast<float>(dao::FrameCount() / kFramesBetweenMoves) * 1.1F;
         dao::Vector target{};
@@ -513,12 +663,14 @@ void NetFrame()
             const float dz = g_remote.z - localPosition.z;
             const float distance = std::sqrt((dx * dx) + (dy * dy) + (dz * dz));
             std::snprintf(line, sizeof line,
-                          "net role=%s local (%.2f, %.2f, %.2f) area 0x%08x remote (%.2f, %.2f, %.2f) area 0x%08x "
-                          "distance %.2f applied %llu sent %llu recv %llu dropped %llu",
-                          g_role == Role::Host ? "host" : "guest", localPosition.x, localPosition.y, localPosition.z,
-                          local->AreaId(), g_remote.x, g_remote.y, g_remote.z, g_remote.areaId, distance,
-                          static_cast<unsigned long long>(g_applied), static_cast<unsigned long long>(g_net.Sent()),
-                          static_cast<unsigned long long>(g_net.Received()),
+                          "net role=%s local=0x%08x remote=0x%08x puppet=0x%08x local (%.2f, %.2f, %.2f) area 0x%08x "
+                          "remote (%.2f, %.2f, %.2f) area 0x%08x distance %.2f applied %llu puppet_applied %llu "
+                          "puppet_distance %.2f sent %llu recv %llu dropped %llu",
+                          g_role == Role::Host ? "host" : "guest", controlled, g_remote.objectId, g_puppetId,
+                          localPosition.x, localPosition.y, localPosition.z, local->AreaId(), g_remote.x, g_remote.y,
+                          g_remote.z, g_remote.areaId, distance, static_cast<unsigned long long>(g_applied),
+                          static_cast<unsigned long long>(g_puppetApplied), g_puppetDistance,
+                          static_cast<unsigned long long>(g_net.Sent()), static_cast<unsigned long long>(g_net.Received()),
                           static_cast<unsigned long long>(g_net.Dropped()));
         }
         else
@@ -543,6 +695,25 @@ void Frame()
     {
         lastLoadTry = frame;
         TryAutoLoad();
+    }
+
+    // Milestone 4: once in the world, the host adds a companion (before the
+    // handoff save) and the guest takes control of its own party member.
+    if (InWorld())
+    {
+        if (g_worldStartFrame == 0)
+        {
+            g_worldStartFrame = frame;
+        }
+        if (frame - g_worldStartFrame > 120)
+        {
+            AddCompanion();
+            SelectPartyMember();
+        }
+    }
+    else
+    {
+        g_worldStartFrame = 0;
     }
 
     // Milestone 3 host: after a few seconds in the world, write a save for the
@@ -630,7 +801,8 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
     {
         g_role = Role::Guest;
     }
-    g_drive = g_role == Role::Host && !Environment("DAOCOOP_DRIVE").empty() && Environment("DAOCOOP_DRIVE") != "0";
+    // Either player may drive their own creature in tests.
+    g_drive = !Environment("DAOCOOP_DRIVE").empty() && Environment("DAOCOOP_DRIVE") != "0";
     g_hostPort = EnvironmentPort("DAOCOOP_HOST_PORT", 45830);
     g_guestPort = EnvironmentPort("DAOCOOP_GUEST_PORT", 45831);
 
@@ -649,6 +821,22 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
         }
     }
     spdlog::info("drive {}", g_drive ? "on (DAOCOOP_DRIVE)" : "off");
+
+    g_addCompanion = g_role == Role::Host && !Environment("DAOCOOP_ADD_COMPANION").empty() &&
+                     Environment("DAOCOOP_ADD_COMPANION") != "0";
+    const std::string selectParty = Environment("DAOCOOP_SELECT_PARTY");
+    g_selectParty = selectParty.empty() ? -1 : std::atoi(selectParty.c_str());
+    if (g_addCompanion)
+    {
+        spdlog::info("companion on: the host creates and hires a mabari before the handoff save");
+    }
+    if (g_selectParty >= 0)
+    {
+        spdlog::info("select on: this player takes party index {}", g_selectParty);
+    }
+    dao::party::OnControlChanged([](dao::ObjectId before, dao::ObjectId now) {
+        spdlog::info("control: 0x{:08x} -> 0x{:08x}", before, now);
+    });
 
     g_handoff = g_role == Role::Host && !Environment("DAOCOOP_HANDOFF").empty() && Environment("DAOCOOP_HANDOFF") != "0";
     g_join = g_role == Role::Guest && !Environment("DAOCOOP_JOIN").empty() && Environment("DAOCOOP_JOIN") != "0";

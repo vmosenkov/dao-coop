@@ -66,11 +66,15 @@ The whole chain was built and then **run in the game** the same evening.
 
 | M3 — in-game join over the network | `tools\join-test.ps1`: host reached its world, wrote a manual save to a private slot (91) and served that slot's folder over TCP; the guest, at its main menu, received it (`join: received the host's slot over TCP (4 files)`), wrote it into a manual slot of its own profile (`join: wrote 4 file(s)`), asked the game to load it (`join: asked the game to load the host's save (slot 91)`) and reached the host's world (`game loaded: slot 91 kind manual`); then state sync continued (569 positions applied, last distance 0.15 m, both in area `0x000000ca`). Script verdict: **PASS**. |
 
-Nothing here is a claim about co-op yet: milestone 0/1 prove the loader, the
-plugin, live engine reads and the two-instance rig; milestone 2 proves a
-host-authoritative state channel inside two running games (the same creature's
-state, mirrored); milestone 3 proves a join that needs no manual file copying.
-There are still no two separate avatars and no combat sync.
+| M4 — two separate avatars | `tools\two-avatar-test.ps1`: the host created a mabari beside the player and added it to the party with the engine's `AddToParty` (command 396) **before** the handoff save — `companion: created 0x00000363 … party list 2 member(s)`; the guest joined by save transfer, then switched control to party index 1 with `SelectPartyMemberIndexMessage` (`select: asking for a click on index 1`, control changed to `0x00000363` — the click-style replace, field 0; field 1 only adds to the selection and leaves control on the first entry). Both players drove their own creature; each game mirrored the other's: **host** controlled `0x00000082`, puppet `0x00000363`, puppet applied **4,815**, puppet distance **0.26 m**; **guest** controlled `0x00000363`, puppet `0x00000082`, puppet applied **5,274**, puppet distance **0.21 m**; both in area `0x000000ca`. Script verdict: **PASS**. |
+
+Nothing here is a claim about full co-op yet: milestone 0/1 prove the loader,
+the plugin, live engine reads and the two-instance rig; milestone 2 proves a
+host-authoritative state channel inside two running games; milestone 3 proves a
+network join that needs no manual file copying; milestone 4 proves **two
+players controlling two different party members in the same world**, each
+game mirroring the other's avatar. Combat, area transitions, a player-facing
+UI and internet transport are still ahead.
 
 ## Our project
 

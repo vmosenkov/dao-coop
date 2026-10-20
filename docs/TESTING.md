@@ -90,6 +90,34 @@ positions applied after the join, last distance 0.15 m, both in area
 What this does **not** prove: two separate avatars, combat sync, transitions,
 or a player-facing host/join UI (the rig drives it by environment variables).
 
+## M4 — two separate avatars
+
+```powershell
+.\tools\build.ps1 -Preset debug
+.\tools\deploy.ps1 -Preset debug
+.\tools\two-avatar-test.ps1
+```
+
+The host creates a mabari next to the player and adds it to the party with the
+engine's own `AddToParty` (command 396) *before* it writes the handoff save, so
+the guest's world already holds the second party member with the same id. After
+joining, the guest selects party index 1 with the party bar's own message
+(`SelectPartyMemberIndexMessage <index> 0`, the click that replaces the
+selection; `<index> 1` only adds to it and leaves control on the first entry).
+Both players then drive their own creature and each game mirrors the other's.
+
+Pass: host logs the companion and a party list of 2, the guest logs the join,
+the selection and a control change, and both last net lines show different
+controlled ids, each side's remote id being the other's controlled id, puppet
+applies above the threshold, a small puppet distance and the same area.
+
+**Verified 2026-10-20 (PASS):** host controlled `0x00000082` and mirrored
+`0x00000363` (4,815 applies, 0.26 m); guest controlled `0x00000363` and
+mirrored `0x00000082` (5,274 applies, 0.21 m); both in area `0x000000ca`.
+
+What this does **not** prove: combat, effects, area transitions, a second
+inventory/dialogue arbitration, internet transport, or a UI.
+
 ## M3 — in-game join
 
 Host starts hosting (options screen button or key), the guest enters the host
