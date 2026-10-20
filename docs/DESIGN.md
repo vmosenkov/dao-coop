@@ -146,9 +146,11 @@ consistent; writing an object's position memory every frame is the fallback
 | M6 | polish + LAN + Steam relay | friend joins over the network; options screen has host/join/settings |
 | M7 | automated QA + write-up + PR | two-instance suite drives every scenario above; coop-anything directory/write-up updated |
 
-**Status 2026-10-20:** M0, M1 and M2 verified in the game (see `STATUS.md`).
-M2 is a host→guest state channel that mirrors the shared creature's position;
-the join handshake, a second avatar and combat sync are still ahead.
+**Status 2026-10-20:** M0, M1, M2 and M3 verified in the game (see
+`STATUS.md`). M2 is a host→guest state channel that mirrors a creature's
+position; M3 is a network join by save transfer (host saves and serves the slot
+folder, guest writes it into its profile and loads it). Two separate avatars,
+combat sync and transitions are still ahead.
 
 ## 5. Risks and unknowns
 

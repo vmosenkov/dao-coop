@@ -66,6 +66,32 @@ rig starts both games on the same save), combat, or area transitions — M3+.
 
 ## M3 — in-game join
 
+```powershell
+.\tools\build.ps1 -Preset debug
+.\tools\deploy.ps1 -Preset debug
+.\tools\join-test.ps1
+```
+
+The host loads its save, plays for ~8 s, writes manual slot 91 and serves that
+slot's folder over TCP. The guest starts at its main menu (auto-load **off**),
+connects, receives the files, writes them into a manual slot of its own profile
+and asks the game to load it; then the M2 sync continues. The script starts the
+guest immediately after the host reaches the world (the host's transfer window
+opens a few seconds later and waits for the guest), and asserts the join lines
+on both sides, `game loaded: slot 91` on the guest, applied positions, a small
+final distance and the same area id in both last net lines.
+
+**Verified 2026-10-20 (PASS):** host: save requested, slot folder sent, 25 drive
+orders; guest: `join: received` (4 files), `join: wrote 4 file(s)`,
+`join: asked the game to load`, `game loaded: slot 91 kind manual`; 569
+positions applied after the join, last distance 0.15 m, both in area
+`0x000000ca`.
+
+What this does **not** prove: two separate avatars, combat sync, transitions,
+or a player-facing host/join UI (the rig drives it by environment variables).
+
+## M3 — in-game join
+
 Host starts hosting (options screen button or key), the guest enters the host
 address. Pass: from main menus only, both end up in the same area with the
 same object ids (log a hash of the party ids and area id on both sides) within

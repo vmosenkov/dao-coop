@@ -64,11 +64,13 @@ The whole chain was built and then **run in the game** the same evening.
 | ID alignment (M3 precondition) | After both loaded the same save, the two independent processes agreed on the controlled creature's object id and the area id. Their positions diverged slightly (−37.86/−10.00 vs −37.80/−9.54) because each simulates on its own — the exact divergence a sync layer has to remove. |
 | M2 — loopback state sync (puppet) | `tools\sync-test.ps1`: the host waited for its world, then the guest started, then 90 s of sync. Host issued **34** drive move orders; both sides exchanged packets (**host**: 3,404 sent / 2,185 received; **guest**: 2,169 sent / 3,346 received; **0 dropped**); the guest applied **830** positions with the engine's `SetPosition`; last reported host→guest distance **0.00 m**, both in area `0x000000ca`. Script verdict: **PASS**. |
 
+| M3 — in-game join over the network | `tools\join-test.ps1`: host reached its world, wrote a manual save to a private slot (91) and served that slot's folder over TCP; the guest, at its main menu, received it (`join: received the host's slot over TCP (4 files)`), wrote it into a manual slot of its own profile (`join: wrote 4 file(s)`), asked the game to load it (`join: asked the game to load the host's save (slot 91)`) and reached the host's world (`game loaded: slot 91 kind manual`); then state sync continued (569 positions applied, last distance 0.15 m, both in area `0x000000ca`). Script verdict: **PASS**. |
+
 Nothing here is a claim about co-op yet: milestone 0/1 prove the loader, the
 plugin, live engine reads and the two-instance rig; milestone 2 proves a
 host-authoritative state channel inside two running games (the same creature's
-state, mirrored). There is no join handshake, no second avatar and no combat
-sync yet.
+state, mirrored); milestone 3 proves a join that needs no manual file copying.
+There are still no two separate avatars and no combat sync.
 
 ## Our project
 

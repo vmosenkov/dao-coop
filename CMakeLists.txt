@@ -12,7 +12,7 @@ endif()
 
 # The co-op plugin. One DLL, loaded by DAOLib from
 # bin_ship\daolib\plugins\daocoop\daocoop.dll.
-add_daolib_plugin(daocoop SOURCES src/Plugin.cpp src/Transport.cpp)
+add_daolib_plugin(daocoop SOURCES src/Plugin.cpp src/Transport.cpp src/SaveTransfer.cpp)
 dao_apply_warnings(daocoop)
-# Winsock for the loopback transport (milestone 2).
+# Winsock for the loopback transport (milestone 2) and the save transfer (M3).
 target_link_libraries(daocoop PRIVATE ws2_32)

@@ -23,6 +23,7 @@
 //   DAOCOOP_DRIVE=1        host only: walk between waypoints for testing
 //   DAOCOOP_HOST_PORT      default 45830
 //   DAOCOOP_GUEST_PORT     default 45831
+#include "SaveTransfer.h"
 #include "Transport.h"
 
 #include "dao/ClientExoApp.h"
@@ -37,12 +38,17 @@
 
 #include <spdlog/spdlog.h>
 
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <mutex>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace
@@ -75,6 +81,26 @@ bool g_haveRemote = false;
 std::uint64_t g_applied = 0;
 bool g_anchorSet = false;
 dao::Vector g_anchor{};
+
+// Milestone 3: the save-transfer join.
+bool g_handoff = false;          // host: save and serve the slot
+bool g_join = false;             // guest: receive the slot and load it
+std::uint16_t g_tcpPort = 45832;
+std::string g_hostIp = "127.0.0.1";
+std::uint64_t g_handoffWorldFrame = 0;
+bool g_handoffRequested = false;
+bool g_handoffSent = false;
+std::uint64_t g_nextJoinTryFrame = 0;
+std::atomic<bool> g_receiveInFlight{false};
+std::atomic<bool> g_filesReady{false};
+std::vector<coop::FileBlob> g_receivedFiles;
+std::mutex g_receivedMutex;
+bool g_joinFilesWritten = false;
+bool g_joinLoadRequested = false;
+std::uint64_t g_nextLoadTryFrame = 0;
+// The host save uses a slot of its own, well away from the player's.
+constexpr std::int32_t kHandoffSlot = 91;
+constexpr std::uint64_t kHandoffDelayFrames = 480; // about eight seconds in the world
 
 // Reads an environment variable without the deprecated getenv (/W4 /WX at
 // DAOLib's settings treats its warning as an error).
@@ -253,6 +279,141 @@ void TryAutoLoad()
     g_loadRequested = false;
 }
 
+// Host side of the join: send the slot folder that was just written. The
+// waiting and the bytes live on a worker thread; the game keeps playing.
+void StartHandoffSend(const std::filesystem::path &folder)
+{
+    std::thread([folder]() {
+        std::string summary;
+        std::string error;
+        if (coop::SendFolder(folder, g_tcpPort, summary, error))
+        {
+            spdlog::info("handoff: sent the slot folder ({}): {}", summary, folder.string());
+        }
+        else
+        {
+            spdlog::warn("handoff: the transfer failed: {}", error);
+        }
+    }).detach();
+}
+
+// Guest side of the join: connect to the host and receive the slot's files.
+void StartGuestReceive()
+{
+    if (g_receiveInFlight.exchange(true))
+    {
+        return;
+    }
+    std::thread([]() {
+        std::vector<coop::FileBlob> files;
+        std::string error;
+        if (coop::ReceiveFolder(g_hostIp, g_tcpPort, files, error))
+        {
+            {
+                const std::lock_guard<std::mutex> lock(g_receivedMutex);
+                g_receivedFiles = std::move(files);
+            }
+            g_filesReady = true;
+            spdlog::info("join: received the host's slot over TCP ({} files)", g_receivedFiles.size());
+        }
+        else
+        {
+            spdlog::warn("join: could not receive the slot yet: {}", error);
+        }
+        g_receiveInFlight = false;
+    }).detach();
+}
+
+std::wstring FirstCharacter()
+{
+    const std::wstring chosen = dao::saves::Character();
+    if (!chosen.empty())
+    {
+        return chosen;
+    }
+    const std::vector<std::wstring> characters = dao::saves::Characters();
+    return characters.empty() ? std::wstring{} : characters.front();
+}
+
+// Guest side: once the files are in memory, write them into a slot folder of
+// the guest's own profile and ask the game to load it. The folder is the game's
+// own path for a manual slot (Slot::Folder), so nothing here hard-codes the
+// player's profile layout.
+void TryGuestJoin()
+{
+    if (!g_filesReady)
+    {
+        return;
+    }
+    if (!g_joinFilesWritten)
+    {
+        std::vector<coop::FileBlob> files;
+        {
+            const std::lock_guard<std::mutex> lock(g_receivedMutex);
+            files = std::move(g_receivedFiles);
+            g_receivedFiles.clear();
+        }
+        if (files.empty())
+        {
+            g_filesReady = false;
+            return;
+        }
+        const std::wstring character = FirstCharacter();
+        if (character.empty())
+        {
+            spdlog::warn("join: the game knows no character to put the save under yet; will retry");
+            g_filesReady = false;
+            const std::lock_guard<std::mutex> lock(g_receivedMutex);
+            g_receivedFiles = std::move(files);
+            return;
+        }
+        const dao::saves::Slot slot{character, kHandoffSlot, dao::saves::Kind::Manual};
+        const std::filesystem::path folder = slot.Folder();
+        std::error_code code;
+        std::filesystem::create_directories(folder, code);
+        int written = 0;
+        for (const coop::FileBlob &file : files)
+        {
+            std::ofstream out(folder / file.name, std::ios::binary | std::ios::trunc);
+            if (!out)
+            {
+                spdlog::warn("join: could not write {} in {}", file.name, folder.string());
+                continue;
+            }
+            out.write(reinterpret_cast<const char *>(file.data.data()), static_cast<std::streamsize>(file.data.size()));
+            ++written;
+        }
+        spdlog::info("join: wrote {} file(s) into {}", written, folder.string());
+        g_joinFilesWritten = true;
+    }
+
+    if (g_joinLoadRequested || dao::FrameCount() < g_nextLoadTryFrame)
+    {
+        return;
+    }
+    g_nextLoadTryFrame = dao::FrameCount() + 120;
+    const std::wstring character = FirstCharacter();
+    if (character.empty())
+    {
+        return;
+    }
+    const dao::saves::Slot slot{character, kHandoffSlot, dao::saves::Kind::Manual};
+    if (!slot.Exists())
+    {
+        spdlog::warn("join: the written slot is not there yet ({})", slot.Folder().string());
+        return;
+    }
+    if (dao::saves::Load(slot))
+    {
+        g_joinLoadRequested = true;
+        spdlog::info("join: asked the game to load the host's save (slot {})", kHandoffSlot);
+    }
+    else
+    {
+        spdlog::info("join: the game refused the load for now; will retry");
+    }
+}
+
 // Milestone 2: one frame's worth of co-op.
 //  - both roles send their controlled creature's state about 20 times a second
 //  - both drain the socket every frame
@@ -384,6 +545,36 @@ void Frame()
         TryAutoLoad();
     }
 
+    // Milestone 3 host: after a few seconds in the world, write a save for the
+    // guest and serve its slot folder.
+    if (g_role == Role::Host && g_handoff && !g_handoffSent && !g_handoffRequested && InWorld())
+    {
+        if (g_handoffWorldFrame == 0)
+        {
+            g_handoffWorldFrame = frame;
+        }
+        if (frame - g_handoffWorldFrame > kHandoffDelayFrames && frame % 60 == 0)
+        {
+            if (dao::saves::Save(dao::saves::Kind::Manual, kHandoffSlot, L"coop-handoff"))
+            {
+                g_handoffRequested = true;
+                spdlog::info("handoff: save requested for the guest (slot {})", kHandoffSlot);
+            }
+        }
+    }
+
+    // Milestone 3 guest: receive the host's slot, write it into this profile,
+    // then load it.
+    if (g_role == Role::Guest && g_join)
+    {
+        if (!g_filesReady && !g_receiveInFlight && frame >= g_nextJoinTryFrame)
+        {
+            g_nextJoinTryFrame = frame + 300; // retry about every five seconds
+            StartGuestReceive();
+        }
+        TryGuestJoin();
+    }
+
     NetFrame();
 
     static std::uint64_t lastLogged = 0;
@@ -458,6 +649,32 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
         }
     }
     spdlog::info("drive {}", g_drive ? "on (DAOCOOP_DRIVE)" : "off");
+
+    g_handoff = g_role == Role::Host && !Environment("DAOCOOP_HANDOFF").empty() && Environment("DAOCOOP_HANDOFF") != "0";
+    g_join = g_role == Role::Guest && !Environment("DAOCOOP_JOIN").empty() && Environment("DAOCOOP_JOIN") != "0";
+    g_tcpPort = EnvironmentPort("DAOCOOP_TCP_PORT", 45832);
+    const std::string hostIp = Environment("DAOCOOP_HOSTIP");
+    g_hostIp = hostIp.empty() ? "127.0.0.1" : hostIp;
+    if (g_handoff)
+    {
+        spdlog::info("handoff on: after a few seconds in the world, save slot {} and serve its folder on TCP {}",
+                     kHandoffSlot, g_tcpPort);
+    }
+    if (g_join)
+    {
+        spdlog::info("join on: look for a host's save at {}:{}", g_hostIp, g_tcpPort);
+    }
+
+    // The host's save just written: hand its slot folder to the waiting guest.
+    dao::saves::OnSaved([](const dao::saves::Slot &saved) {
+        if (g_role == Role::Host && g_handoff && !g_handoffSent && saved.kind == dao::saves::Kind::Manual &&
+            saved.number == kHandoffSlot)
+        {
+            g_handoffSent = true;
+            spdlog::info("handoff: slot {} written; serving its folder", saved.number);
+            StartHandoffSend(saved.Folder());
+        }
+    });
 
     dao::saves::OnGameLoaded([](const std::optional<dao::saves::Slot> &loaded) {
         if (loaded)
