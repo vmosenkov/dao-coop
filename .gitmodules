@@ -1,0 +1,3 @@
+[submodule "extern/DAOLib"]
+	path = extern/DAOLib
+	url = https://github.com/Whocares66-Dev/DAOLib.git

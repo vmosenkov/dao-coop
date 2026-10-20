@@ -36,6 +36,8 @@ function Find-VcVarsAll {
             $candidates += (Join-Path $root "Microsoft Visual Studio\2022\$ed")
         }
     }
+    # This machine's C++ toolset lives off the default location.
+    $candidates += 'E:\VS2022BuildTools'
     foreach ($c in ($candidates | Where-Object { $_ } | Select-Object -Unique)) {
         $vcvars = Join-Path $c 'VC\Auxiliary\Build\vcvarsall.bat'
         if (Test-Path $vcvars) { return $vcvars }
@@ -58,9 +60,22 @@ foreach ($line in $envLines) {
 }
 
 if (-not $env:VCPKG_ROOT) { $env:VCPKG_ROOT = 'E:\vcpkg' }
+# The vcvars environment points VCPKG_ROOT at VS's bundled vcpkg; use ours.
+$env:VCPKG_ROOT = 'E:\vcpkg'
 if (-not (Test-Path (Join-Path $env:VCPKG_ROOT 'vcpkg.exe'))) {
     throw "vcpkg not bootstrapped at $env:VCPKG_ROOT (run bootstrap-vcpkg.bat there)."
 }
+
+# vcvarsall does not always put VS's CMake and Ninja on PATH; make sure both
+# are reachable and pin Ninja for the preset ($env{NINJA_EXE}).
+$vsRoot = (Resolve-Path (Join-Path (Split-Path $vcvars -Parent) '..\..\..')).Path
+$cmakeBin = Join-Path $vsRoot 'Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin'
+$ninjaBin = Join-Path $vsRoot 'Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja'
+$env:PATH = "$cmakeBin;$ninjaBin;$env:PATH"
+$ninja = Get-Command ninja -ErrorAction SilentlyContinue
+if (-not $ninja) { throw "ninja not found under $ninjaBin" }
+$env:NINJA_EXE = $ninja.Source
+if (-not (Get-Command cmake -ErrorAction SilentlyContinue)) { throw "cmake not found under $cmakeBin" }
 if ($Jobs -gt 0) { $env:CMAKE_BUILD_PARALLEL_LEVEL = "$Jobs" }
 
 if ($Fresh -and (Test-Path (Join-Path $buildRoot $Preset))) {
@@ -69,11 +84,29 @@ if ($Fresh -and (Test-Path (Join-Path $buildRoot $Preset))) {
 }
 
 Push-Location $repo
+$buildLog = Join-Path $buildRoot "build-$Preset.log"
+New-Item -ItemType Directory -Force $buildRoot | Out-Null
+if (Test-Path $buildLog) { Remove-Item $buildLog -Force }
+function Show-BuildFindings([string] $log, [string] $what) {
+    Write-Host "$what output kept at $log"
+    $found = Select-String -Path $log -Pattern 'error C[0-9]{4}|error LNK|fatal error|FAILED:|ninja: build stopped|error:' -ErrorAction SilentlyContinue
+    if ($found) {
+        Write-Host '--- errors ---'
+        $found | Select-Object -First 40 | ForEach-Object { Write-Host ("  L{0}: {1}" -f $_.LineNumber, $_.Line.Trim()) }
+    }
+    else {
+        Write-Host '--- no error lines; last 40 lines ---'
+        Get-Content $log -Tail 40 | ForEach-Object { Write-Host "  $_" }
+    }
+}
 try {
-    & cmake --preset $Preset
-    if ($LASTEXITCODE -ne 0) { throw "cmake configure failed ($LASTEXITCODE)" }
-    & cmake --build --preset $Preset
-    if ($LASTEXITCODE -ne 0) { throw "cmake build failed ($LASTEXITCODE)" }
+    # Keep the (very long) compiler output on disk; print only findings.
+    & cmake --preset $Preset *> $buildLog
+    if ($LASTEXITCODE -ne 0) { Show-BuildFindings $buildLog 'configure'; throw "cmake configure failed ($LASTEXITCODE)" }
+    # DAOLib declares the loader target but leaves it out of ALL when it is a
+    # subdirectory, so ask for both targets by name.
+    & cmake --build --preset $Preset --target daocoop loader *>> $buildLog
+    if ($LASTEXITCODE -ne 0) { Show-BuildFindings $buildLog 'build'; throw "cmake build failed ($LASTEXITCODE)" }
 }
 finally {
     Pop-Location

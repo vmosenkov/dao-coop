@@ -2,6 +2,7 @@
     "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
     "name": "dao-coop",
     "version-string": "0.0.1",
+    "builtin-baseline": "469a0504e4a6ebf6173d1c0f51a7fa34c382fd43",
     "dependencies": [
         "detours",
         "spdlog",
