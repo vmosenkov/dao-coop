@@ -43,11 +43,26 @@ a timestamp from this run (check the real `loader.log` mtime is unchanged).
 
 ## M2 — loopback replication (puppets)
 
-Two instances, both with the same save loaded (copy the save into the guest's
-instance profile as the first step of the join flow), transport binds on
-127.0.0.1. Pass: moving the guest's controlled creature changes the host
-game's copy of the same creature position within a tolerance (log both sides),
-and vice versa; the log prints received-state counters at both ends.
+```powershell
+.\tools\build.ps1 -Preset debug
+.\tools\deploy.ps1 -Preset debug
+.\tools\sync-test.ps1 -SyncSeconds 90
+```
+
+The script starts the host, waits for its world (the intro movie only advances
+while its window is foreground, so a guest started too early can leave the
+host stuck in it), starts the guest, waits for its world, runs 90 s of sync,
+and reads the plugin logs. Pass: both instances report packets received, the
+guest reports applied positions, its last reported distance to the host is
+small, and the host reports drive orders.
+
+**Verified 2026-10-20 (PASS):** host 34 drive orders; host 3,404 sent / 2,185
+received; guest 2,169 sent / 3,346 received; 0 dropped; guest applied 830
+positions with the engine's `SetPosition`; last host→guest distance 0.00 m;
+both in area `0x000000ca`.
+
+What this does **not** prove: a second avatar/player, a join handshake (the
+rig starts both games on the same save), combat, or area transitions — M3+.
 
 ## M3 — in-game join
 
