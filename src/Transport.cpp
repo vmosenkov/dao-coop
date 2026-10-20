@@ -5,8 +5,8 @@
 #include <WinSock2.h>
 #include <WS2tcpip.h>
 
+#include <cstdio>
 #include <cstring>
-
 namespace coop
 {
 namespace
@@ -35,7 +35,7 @@ Transport::~Transport()
     Close();
 }
 
-bool Transport::Open(std::uint16_t listenPort, std::uint16_t peerPort)
+bool Transport::Open(std::uint16_t listenPort, std::uint16_t peerPort, const char *peerIp)
 {
     if (IsOpen())
     {
@@ -55,7 +55,8 @@ bool Transport::Open(std::uint16_t listenPort, std::uint16_t peerPort)
     sockaddr_in local{};
     local.sin_family = AF_INET;
     local.sin_port = htons(listenPort);
-    local.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    // Any interface: loopback works, and a LAN address reaches us too.
+    local.sin_addr.s_addr = htonl(INADDR_ANY);
     if (::bind(socket, reinterpret_cast<const sockaddr *>(&local), sizeof local) == SOCKET_ERROR)
     {
         ::closesocket(socket);
@@ -73,7 +74,14 @@ bool Transport::Open(std::uint16_t listenPort, std::uint16_t peerPort)
     sockaddr_in peer{};
     peer.sin_family = AF_INET;
     peer.sin_port = htons(peerPort);
-    peer.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    const char *address = (peerIp != nullptr && peerIp[0] != '\0') ? peerIp : "127.0.0.1";
+    if (::inet_pton(AF_INET, address, &peer.sin_addr) != 1)
+    {
+        address = "127.0.0.1";
+        ::inet_pton(AF_INET, address, &peer.sin_addr);
+    }
+    std::snprintf(peerText_, sizeof peerText_, "%s", address);
+    peerText_[sizeof peerText_ - 1] = '\0';
     std::memcpy(peer_, &peer, sizeof peer);
     peerSize_ = sizeof peer;
     socket_ = static_cast<std::uintptr_t>(socket);

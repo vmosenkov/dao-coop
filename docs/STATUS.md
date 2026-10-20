@@ -68,13 +68,15 @@ The whole chain was built and then **run in the game** the same evening.
 
 | M4 — two separate avatars | `tools\two-avatar-test.ps1`: the host created a mabari beside the player and added it to the party with the engine's `AddToParty` (command 396) **before** the handoff save — `companion: created 0x00000363 … party list 2 member(s)`; the guest joined by save transfer, then switched control to party index 1 with `SelectPartyMemberIndexMessage` (`select: asking for a click on index 1`, control changed to `0x00000363` — the click-style replace, field 0; field 1 only adds to the selection and leaves control on the first entry). Both players drove their own creature; each game mirrored the other's: **host** controlled `0x00000082`, puppet `0x00000363`, puppet applied **4,815**, puppet distance **0.26 m**; **guest** controlled `0x00000363`, puppet `0x00000082`, puppet applied **5,274**, puppet distance **0.21 m**; both in area `0x000000ca`. Script verdict: **PASS**. |
 
-Nothing here is a claim about full co-op yet: milestone 0/1 prove the loader,
-the plugin, live engine reads and the two-instance rig; milestone 2 proves a
-host-authoritative state channel inside two running games; milestone 3 proves a
-network join that needs no manual file copying; milestone 4 proves **two
-players controlling two different party members in the same world**, each
-game mirroring the other's avatar. Combat, area transitions, a player-facing
-UI and internet transport are still ahead.
+| M5 — hostile health/death channel | `tools\combat-test.ps1`: the host spawned an ogre (`ogre_default.utc`) before the handoff save with the scripts' AI-off switch (`CREATURE_RULES_FLAG0` bit 8) and inactive, so neither game entered combat and the save was allowed; after the guest joined, the host damaged it on a schedule (12 ticks, health `220 → 0`) and carried its id/position/health in every state packet. The guest received the same hostile (`0x00000363`), took health `0.0` (the death state) and applied it **13** times with the engine's property setter. Script verdict: **PASS**. |
+
+Nothing here is a claim about full co-op yet: M0/1 prove the loader, plugin and
+two-instance rig; M2 a host-authoritative state channel; M3 a network join with
+no manual file copying; M4 two players controlling two different party members
+in one world; M5 the hostile health/death channel (with plugin-applied damage
+standing in for the engine's combat, AI and death animations still unsynced).
+A player-facing UI, real combat arbitration, area transitions and an internet
+transport are still ahead.
 
 ## Our project
 

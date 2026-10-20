@@ -118,6 +118,34 @@ mirrored `0x00000082` (5,274 applies, 0.21 m); both in area `0x000000ca`.
 What this does **not** prove: combat, effects, area transitions, a second
 inventory/dialogue arbitration, internet transport, or a UI.
 
+## M5 — hostile health/death channel
+
+```powershell
+.\tools\build.ps1 -Preset debug
+.\tools\deploy.ps1 -Preset debug
+.\tools\combat-test.ps1
+```
+
+The host spawns an ogre with `CreateObject` before the handoff save, but sets
+the scripts' own AI-off switch (`SetLocalInt(creature, "CREATURE_RULES_FLAG0",
+8)`) and makes it inactive, so no fight starts and the host's save is allowed
+(the engine refuses saves in combat — the first version of this test sat in a
+dead/paused GUI instead). After the guest joins, the host damages the ogre on a
+schedule and carries its id, position and health in the state packet; the guest
+sets its copy's current health with `CCCreature::SetProperty`.
+
+Pass: host logs the spawn and ≥5 damage ticks, its health falls, the guest's
+last net line names the same hostile id, its received health equals the host's
+live value (±1) and it applied health changes.
+
+**Verified 2026-10-20 (PASS):** hostile `0x00000363`; host 12 damage ticks,
+`220 → 0`; guest received `hostile_health 0.0` and applied it 13 times (the
+hostile reached its death state, so the channel carried death as well as
+damage).
+
+What this does **not** prove: real combat (the damage is applied by the host
+plugin as a stand-in), enemy AI/animations, loot, or guest attack intents.
+
 ## M3 — in-game join
 
 Host starts hosting (options screen button or key), the guest enters the host
