@@ -1,0 +1,13 @@
+{
+    "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+    "name": "dao-coop",
+    "version-string": "0.0.1",
+    "dependencies": [
+        "detours",
+        "spdlog",
+        {
+            "name": "directxtex",
+            "default-features": false
+        }
+    ]
+}
