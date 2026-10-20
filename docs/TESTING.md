@@ -146,6 +146,31 @@ damage).
 What this does **not** prove: real combat (the damage is applied by the host
 plugin as a stand-in), enemy AI/animations, loot, or guest attack intents.
 
+## Release build, config file and LAN addressing
+
+```powershell
+.\tools\build.ps1 -Preset debug            # first: installs the vcpkg packages
+.\tools\build.ps1 -Preset release -Offline # release, reusing those packages
+.\tools\package.ps1                        # dist\dao-coop-<version>.zip
+.\tools\deploy.ps1 -Preset release         # into the isolated test copy
+.\tools\join-test.ps1                      # must PASS on the release build
+```
+
+Config file: put `daocoop.ini` beside `daocoop.dll` (template:
+`daocoop.ini.example`). An instance started with only `DAOLIB_INSTANCE` set and
+no `DAOCOOP_*` variables must log `config: N value(s) from …`, the role, the
+peer and the join/handoff switches from the file. Verified 2026-10-20 with a
+host instance: 8 values read, `autoload on`, `net: role host`, `handoff on`,
+then a normal load.
+
+LAN addressing: set `DAOCOOP_PEERIP` and `DAOCOOP_HOSTIP` to the other
+player's IP (or an interface address of this machine to exercise the path),
+then run the join test. Verified 2026-10-20 on this machine's non-loopback
+address `192.168.56.1`: both instances bound `0.0.0.0`, logged `sending to
+192.168.56.1:…`, and the join + sync test passed. A second physical PC has not
+been tried; the host must allow inbound UDP 45830 and TCP 45832, the guest UDP
+45831.
+
 ## M3 — in-game join
 
 Host starts hosting (options screen button or key), the guest enters the host

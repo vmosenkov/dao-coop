@@ -1,0 +1,44 @@
+# dao-coop configuration
+#
+# Put this file beside daocoop.dll, at
+#   <game dir>\bin_ship\daolib\plugins\daocoop\daocoop.ini
+# and launch Dragon Age: Origins normally. Environment variables of the same
+# purpose (DAOCOOP_ROLE, DAOCOOP_PEERIP, ...) override these values; the test
+# rig uses them, players normally edit this file only.
+#
+# BOTH players need the same game build and the same mod version.
+
+[net]
+# host or guest. "off" leaves the plugin idle (its logging still works).
+role = host
+# The other player's IPv4 address. For a LAN game: the host PC's LAN address
+# (the guest puts it here; the host may leave it, it only sends to the guest's
+# ephemeral address, but set it to the guest's address for symmetry).
+peer = 127.0.0.1
+# UDP ports: the host listens on host_port and the guest on guest_port.
+# Open both on the host PC's firewall, plus tcp_port for the save transfer.
+host_port = 45830
+guest_port = 45831
+tcp_port = 45832
+
+[session]
+# Host only: after a few seconds in the world, write a save and serve it to the
+# guest (slot 91 in a character folder of the host's profile).
+handoff = 1
+# Guest only: look for the host's save at the peer address and load it.
+join = 1
+# Host only: create and hire a mabari companion before the save, so there is a
+# second party member for the guest to control.
+add_companion = 1
+# Guest only: which party member the guest controls (0 is the Warden).
+select_party = 1
+# Host only: load the newest save when the game reaches a menu. The host should
+# be in a save before hosting; leave 0 if you want to load one by hand.
+autoload = 0
+
+[test]
+# The automated rig uses these; players leave them at 0.
+# Both: walk the player's own creature between waypoints.
+drive = 0
+# Host: spawn an inactive ogre and mirror its health (milestone-5 test).
+combat_test = 0

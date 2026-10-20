@@ -146,13 +146,12 @@ consistent; writing an object's position memory every frame is the fallback
 | M6 | polish + LAN + Steam relay | friend joins over the network; options screen has host/join/settings |
 | M7 | automated QA + write-up + PR | two-instance suite drives every scenario above; coop-anything directory/write-up updated |
 
-**Status 2026-10-20:** M0–M5 verified in the game (see `STATUS.md`). M2 is a
-host→guest state channel; M3 is a network join by save transfer; M4 is two
-players controlling two different party members in the same world; M5 carries
-a hostile creature's position, health and death state host→guest. The
+**Status 2026-10-20:** M0–M5 verified in the game (see `STATUS.md`), plus a
+release package (`dao-coop-0.6.0.zip`, `README-INSTALL.txt`), a player-facing
+`daocoop.ini`, and the LAN path exercised over a non-loopback address. The
 transport binds any interface and takes a peer address (`DAOCOOP_PEERIP`), so
-the same build serves loopback and a LAN; only loopback has been run. Real
-combat arbitration, a UI and area transitions are ahead.
+the same build serves loopback and a LAN; two physical PCs have not been tried.
+Real combat arbitration, a UI beyond the ini and area transitions are ahead.
 
 ## 5. Risks and unknowns
 

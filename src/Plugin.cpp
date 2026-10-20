@@ -40,12 +40,14 @@
 #include <spdlog/spdlog.h>
 
 #include <atomic>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -142,9 +144,88 @@ std::string Environment(const char *name)
     return result;
 }
 
-std::uint16_t EnvironmentPort(const char *name, std::uint16_t fallback)
+// ---------------------------------------------------------------------------
+// Configuration: daocoop.ini beside the plugin, for players; environment
+// variables, for the test rig. An environment variable, when set, wins over
+// the file. Keys are flat ("role", "peer", "join", ...); [sections] and
+// '#'/';' comments are accepted and ignored as structure.
+// ---------------------------------------------------------------------------
+
+std::map<std::string, std::string> g_ini;
+
+std::string Trim(const std::string &text)
 {
-    const std::string text = Environment(name);
+    const auto first = text.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos)
+    {
+        return {};
+    }
+    const auto last = text.find_last_not_of(" \t\r\n");
+    return text.substr(first, last - first + 1);
+}
+
+std::string Lower(std::string text)
+{
+    for (char &c : text)
+    {
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    return text;
+}
+
+void LoadIni(const std::filesystem::path &path)
+{
+    std::ifstream file(path);
+    if (!file)
+    {
+        spdlog::warn("config: no {} - using defaults and environment variables", path.string());
+        return;
+    }
+    std::string line;
+    int count = 0;
+    while (std::getline(file, line))
+    {
+        const std::string trimmed = Trim(line);
+        if (trimmed.empty() || trimmed[0] == '#' || trimmed[0] == ';' || trimmed[0] == '[')
+        {
+            continue;
+        }
+        const auto equals = trimmed.find('=');
+        if (equals == std::string::npos)
+        {
+            continue;
+        }
+        const std::string key = Lower(Trim(trimmed.substr(0, equals)));
+        if (!key.empty())
+        {
+            g_ini[key] = Trim(trimmed.substr(equals + 1));
+            ++count;
+        }
+    }
+    spdlog::info("config: {} value(s) from {}", count, path.string());
+}
+
+// A setting: the environment variable if set, else the ini value, else "".
+std::string Setting(const char *key, const char *envName)
+{
+    const std::string fromEnv = Environment(envName);
+    if (!fromEnv.empty())
+    {
+        return fromEnv;
+    }
+    const auto found = g_ini.find(key);
+    return found != g_ini.end() ? found->second : std::string{};
+}
+
+bool Flag(const char *key, const char *envName)
+{
+    const std::string value = Lower(Setting(key, envName));
+    return !value.empty() && value != "0" && value != "false" && value != "no" && value != "off";
+}
+
+std::uint16_t PortSetting(const char *key, const char *envName, std::uint16_t fallback)
+{
+    const std::string text = Setting(key, envName);
     if (text.empty())
     {
         return fallback;
@@ -153,6 +234,7 @@ std::uint16_t EnvironmentPort(const char *name, std::uint16_t fallback)
     return value > 0 && value < 65536 ? static_cast<std::uint16_t>(value) : fallback;
 }
 
+// A setting: the environment variable if set, else the ini value, else "".
 // The mode's number and, when it is one the engine names, its name. The
 // number matters in the logs: an "other" mode hid a stuck intro movie once
 // (the host waited three minutes because its window was never foreground).
@@ -947,14 +1029,17 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
         return false;
     }
 
+    const std::filesystem::path ini = std::filesystem::path(info->pluginPath).parent_path() / L"daocoop.ini";
+    LoadIni(ini);
+
     const std::string instance = Environment("DAOLIB_INSTANCE");
     spdlog::info("dao-coop loaded (plugin API {}), instance \"{}\"", dao::kPluginApiVersion,
                  instance.empty() ? "default" : instance);
 
-    g_autoLoad = !Environment("DAOCOOP_AUTOLOAD").empty() && Environment("DAOCOOP_AUTOLOAD") != "0";
-    spdlog::info("autoload {}", g_autoLoad ? "on (DAOCOOP_AUTOLOAD)" : "off");
+    g_autoLoad = Flag("autoload", "DAOCOOP_AUTOLOAD");
+    spdlog::info("autoload {}", g_autoLoad ? "on" : "off");
 
-    const std::string role = Environment("DAOCOOP_ROLE");
+    const std::string role = Lower(Setting("role", "DAOCOOP_ROLE"));
     if (role == "host")
     {
         g_role = Role::Host;
@@ -963,10 +1048,11 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
     {
         g_role = Role::Guest;
     }
-    // Either player may drive their own creature in tests.
-    g_drive = !Environment("DAOCOOP_DRIVE").empty() && Environment("DAOCOOP_DRIVE") != "0";
-    g_hostPort = EnvironmentPort("DAOCOOP_HOST_PORT", 45830);
-    g_guestPort = EnvironmentPort("DAOCOOP_GUEST_PORT", 45831);
+    g_drive = Flag("drive", "DAOCOOP_DRIVE");
+    g_hostPort = PortSetting("host_port", "DAOCOOP_HOST_PORT", 45830);
+    g_guestPort = PortSetting("guest_port", "DAOCOOP_GUEST_PORT", 45831);
+    const std::string peerSetting = Setting("peer", "DAOCOOP_PEERIP");
+    g_peerIp = peerSetting.empty() ? "127.0.0.1" : peerSetting;
 
     if (g_role != Role::None)
     {
@@ -979,15 +1065,14 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
         }
         else
         {
-            spdlog::error("net: could not open UDP socket on 127.0.0.1:{} (is the port taken?)", listenPort);
+            spdlog::error("net: could not open UDP socket on port {} (is the port taken?)", listenPort);
             g_role = Role::None;
         }
     }
-    spdlog::info("drive {}", g_drive ? "on (DAOCOOP_DRIVE)" : "off");
+    spdlog::info("drive {}", g_drive ? "on" : "off");
 
-    g_addCompanion = g_role == Role::Host && !Environment("DAOCOOP_ADD_COMPANION").empty() &&
-                     Environment("DAOCOOP_ADD_COMPANION") != "0";
-    const std::string selectParty = Environment("DAOCOOP_SELECT_PARTY");
+    g_addCompanion = g_role == Role::Host && Flag("add_companion", "DAOCOOP_ADD_COMPANION");
+    const std::string selectParty = Setting("select_party", "DAOCOOP_SELECT_PARTY");
     g_selectParty = selectParty.empty() ? -1 : std::atoi(selectParty.c_str());
     if (g_addCompanion)
     {
@@ -998,23 +1083,21 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
         spdlog::info("select on: this player takes party index {}", g_selectParty);
     }
 
-    g_combatTest = g_role == Role::Host && !Environment("DAOCOOP_COMBAT_TEST").empty() &&
-                   Environment("DAOCOOP_COMBAT_TEST") != "0";
+    g_combatTest = g_role == Role::Host && Flag("combat_test", "DAOCOOP_COMBAT_TEST");
     if (g_combatTest)
     {
         spdlog::info("combat on: the host spawns a hostile before the handoff save and keeps its health in sync");
     }
-    const std::string peerIp = Environment("DAOCOOP_PEERIP");
-    g_peerIp = peerIp.empty() ? "127.0.0.1" : peerIp;
     dao::party::OnControlChanged([](dao::ObjectId before, dao::ObjectId now) {
         spdlog::info("control: 0x{:08x} -> 0x{:08x}", before, now);
     });
 
-    g_handoff = g_role == Role::Host && !Environment("DAOCOOP_HANDOFF").empty() && Environment("DAOCOOP_HANDOFF") != "0";
-    g_join = g_role == Role::Guest && !Environment("DAOCOOP_JOIN").empty() && Environment("DAOCOOP_JOIN") != "0";
-    g_tcpPort = EnvironmentPort("DAOCOOP_TCP_PORT", 45832);
-    const std::string hostIp = Environment("DAOCOOP_HOSTIP");
-    g_hostIp = hostIp.empty() ? "127.0.0.1" : hostIp;
+    g_handoff = g_role == Role::Host && Flag("handoff", "DAOCOOP_HANDOFF");
+    g_join = g_role == Role::Guest && Flag("join", "DAOCOOP_JOIN");
+    g_tcpPort = PortSetting("tcp_port", "DAOCOOP_TCP_PORT", 45832);
+    // The save transfer talks to the host: its own "host" setting, or the peer.
+    const std::string hostSetting = Setting("host", "DAOCOOP_HOSTIP");
+    g_hostIp = hostSetting.empty() ? g_peerIp : hostSetting;
     if (g_handoff)
     {
         spdlog::info("handoff on: after a few seconds in the world, save slot {} and serve its folder on TCP {}",

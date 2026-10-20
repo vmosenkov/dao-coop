@@ -145,19 +145,25 @@ Draft pending the owner's review.
   release at ~90%, targeted 2027) **plans** net support/co-op but has no public
   artifact. Not a dependency.
 
+## Round 4 — release package, config file, LAN transport (verified 2026-10-20)
+
+| Step | Evidence |
+|---|---|
+| Config file | `daocoop.ini` beside the plugin, env vars override it. One host instance started with only `DAOLIB_INSTANCE=host` and **no** `DAOCOOP_*` variables: log said `config: 8 value(s) from …\daocoop.ini`, `autoload on`, `net: role host listening on 0.0.0.0:45830 sending to 127.0.0.1:45831`, `handoff on`, then reached the world and loaded a save. So a player edits one file; nothing else is needed. |
+| Release build | `tools\build.ps1 -Preset release -Offline` (reuses the packages the debug build installed; vcpkg's own release configure was hanging on a GitHub download) → `dinput8.dll` 868,352 bytes, `daocoop.dll` 555,008 bytes (release runtime — on a player's PC the debug build would need VS debug runtimes). |
+| Package | `tools\package.ps1` → `E:\dao-coop-build\dist\dao-coop-0.6.0.zip` (6.1 MB): loader + address files + plugin + `README-INSTALL.txt` + `daocoop.ini.example`, laid out as the game folder. |
+| Release build tested | `tools\join-test.ps1` on the release build: **PASS** — host served slot 91, guest loaded it, 58 positions applied, last distance 0.01 m, same area. |
+| LAN transport | `DAOCOOP_PEERIP`/`HOSTIP` set to this machine's non-loopback address `192.168.56.1`: both instances bound `0.0.0.0` and logged `sending to 192.168.56.1:…`; the join + sync test **PASSED** (host served the save, guest joined, same area). The code path a LAN of two PCs uses is therefore exercised; a second physical PC has not been tried. |
+
 ## Next actions
 
-1. ~~Install the C++ workload → build `daocoop.dll` + loader.~~ Done.
-2. ~~Deploy to `E:\DAO-Coop-Test`, run with `DAOLIB_INSTANCE=host`, confirm
-   `daocoop.log` shows live state (milestone 0).~~ Done.
-3. ~~Start `DAOLIB_INSTANCE=guest` beside it; confirm two instances run with
-   separate profiles (milestone 1).~~ Done.
-4. Milestone 2: a loopback transport between the two instances and a puppet —
-   each instance's controlled creature's state sent to the other and applied
-   to its copy of the same id. Needs: a listener thread + queue drained in
-   `OnFrame`, a versioned packet, and a write path for position (orders first,
-   memory write as fallback).
-5. Milestone 3: in-game join (host save → transport → guest `dao::saves::Load`)
-   instead of the manual/autoload path used for M1.
-6. Decide with the owner: publish `dao-coop` after M2; contact the DAOLib
-   author about the private `DAOKadanMP` after M2.
+1. Real combat arbitration: guest attacks sent to the host and resolved there
+   (the hostile health channel works; damage is still applied by the host
+   plugin in the test). Then effects, loot and death animations.
+2. Area transitions with object-id alignment (`OnAreasBuild`).
+3. A second physical PC over the LAN (code path exercised on one machine via
+   its non-loopback address), then the internet transport (Steam relay).
+4. A minimal player-facing host/join flow beyond the ini file, and the
+   automated suite extended to combat and transition scenarios.
+5. Owner decisions pending: publish the 0.6.0 release artifact; review draft
+   PR cranebeaker/coop-anything#81.

@@ -18,7 +18,11 @@ param(
     [ValidateSet('debug', 'release')]
     [string] $Preset = 'debug',
     [switch] $Fresh,
-    [int] $Jobs = 0
+    [int] $Jobs = 0,
+    # Release without letting vcpkg touch the network: reuse the packages a
+    # debug build already installed for the same x86 triplet.
+    [switch] $Offline,
+    [string] $InstalledDir = 'E:\dao-coop-build\debug\vcpkg_installed'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -101,7 +105,18 @@ function Show-BuildFindings([string] $log, [string] $what) {
 }
 try {
     # Keep the (very long) compiler output on disk; print only findings.
-    & cmake --preset $Preset *> $buildLog
+    if ($Offline) {
+        if (-not (Test-Path $InstalledDir)) {
+            throw "-Offline needs the packages a debug build installed; $InstalledDir is not there (run -Preset debug first)."
+        }
+        # vcpkg refuses to switch a build tree from manifest to non-manifest
+        # mode, so start that preset's tree over.
+        if (Test-Path (Join-Path $buildRoot $Preset)) { Remove-Item -Recurse -Force (Join-Path $buildRoot $Preset) }
+        & cmake --preset $Preset -DVCPKG_MANIFEST_MODE=OFF "-DVCPKG_INSTALLED_DIR=$InstalledDir" *> $buildLog
+    }
+    else {
+        & cmake --preset $Preset *> $buildLog
+    }
     if ($LASTEXITCODE -ne 0) { Show-BuildFindings $buildLog 'configure'; throw "cmake configure failed ($LASTEXITCODE)" }
     # DAOLib declares the loader target but leaves it out of ALL when it is a
     # subdirectory, so ask for both targets by name.
