@@ -105,6 +105,14 @@ Opened 2026-10-20 (owner approved the account): **"Claim a game: Dragon Age:
 Origins (co-op on DAOLib, from zero)"**,
 https://github.com/cranebeaker/coop-anything/issues/79 .
 
+Project repository (published after milestone 2, owner's decision):
+**https://github.com/vmosenkov/dao-coop** (public, GPL-3.0).
+
+Contribution: **draft PR https://github.com/cranebeaker/coop-anything/pull/81**
+— replaces the DAO gap entry with this project's entry, adds the game write-up
+(`games/dragon-age-origins/README.md`) and these notes, QA level `automated`.
+Draft pending the owner's review.
+
 ## Research (phase 0/1, done)
 
 - No public co-op/multiplayer mod for DAO has ever shipped. DAO is listed as an
