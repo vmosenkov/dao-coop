@@ -62,10 +62,13 @@ The whole chain was built and then **run in the game** the same evening.
 | M0 — plugin loads, reads live state | One host instance with `DAOCOOP_AUTOLOAD=1`: `loader.log` says `daocoop.dll: loaded` / `1 plugin(s)`; `daocoop.log` says `dao-coop loaded (plugin API 2), instance "host"`, `autoload on`, `autoload: asking to load the newest save…`, `game loaded: slot 1 kind auto`, then `mode explore` with `party bar: 1 selected` and `controlled 0x00000082: area 0x000000ca pos (-37.80, -9.54, 0.02) health 140.0 / 140.0`. |
 | M1 — two isolated instances, both in the world | Two `daorigins` processes ran side by side (941 MB and 940 MB working set), each as its own named instance, both loading the same seeded save: host `game loaded: slot 1 kind auto` at 21:11:29, guest at 21:12:04; both reached `mode explore`; both reported controlled **0x00000082 in area 0x000000ca** with health 140/140. |
 | ID alignment (M3 precondition) | After both loaded the same save, the two independent processes agreed on the controlled creature's object id and the area id. Their positions diverged slightly (−37.86/−10.00 vs −37.80/−9.54) because each simulates on its own — the exact divergence a sync layer has to remove. |
+| M2 — loopback state sync (puppet) | `tools\sync-test.ps1`: the host waited for its world, then the guest started, then 90 s of sync. Host issued **34** drive move orders; both sides exchanged packets (**host**: 3,404 sent / 2,185 received; **guest**: 2,169 sent / 3,346 received; **0 dropped**); the guest applied **830** positions with the engine's `SetPosition`; last reported host→guest distance **0.00 m**, both in area `0x000000ca`. Script verdict: **PASS**. |
 
 Nothing here is a claim about co-op yet: milestone 0/1 prove the loader, the
-plugin, live engine reads and the two-instance rig. Networking, puppets and
-join are milestone 2+.
+plugin, live engine reads and the two-instance rig; milestone 2 proves a
+host-authoritative state channel inside two running games (the same creature's
+state, mirrored). There is no join handshake, no second avatar and no combat
+sync yet.
 
 ## Our project
 
