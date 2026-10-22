@@ -217,14 +217,20 @@ Draft pending the owner's review.
 | Filters | The movie received `_root.categories` from `EventLogUi.cpp` (`SetArray` of `int32`), and draws ALL/COMBAT/MULTI/SYSTEM tabs; a click sets the filter. Shown on screen in `docs/images/event-log-filters.png`; the filter click itself was not exercised by hand yet. |
 | Creature names | `dao::script::api::GetName` (command 275) feeds the combat lines: the demo fight logged "Морриган attacks Огр", "Айдан attacks Огр", "Dusty attacks Огр", "Огр died". Log text is UTF-8; `EventLogUi` widens it for AS2 (`MultiByteToWideChar`). |
 | Still missing | Scrolling history and expanded event details; player names for multiplayer lines (the protocol carries only ids); the filtered tab click is unverified by hand. |
+## Round 12 — coop-anything contribution updated (2026-10-23)
+
+| Item | Evidence |
+|---|---|
+| Update PR | Draft [PR #141](https://github.com/cranebeaker/coop-anything/pull/141) in cranebeaker/coop-anything (branch `game/dragon-age-origins-update` in the vmosenkov fork): the Dragon Age: Origins write-up now describes the verified combat arbitration, death/revival, guest rejoin and the in-game Event Log (milestones M7-M10), the QA section lists the new tests, the known issues and next steps are current; `DIRECTORY.md` was regenerated from `data/directory.yaml` (entry `prototype` → `alpha`, `players_visible: yes`, notes and `checked: 2026-10-23`). The PR is a draft so the owner can review it, per the hub's rules. |
+| Earlier PR | [PR #81](https://github.com/cranebeaker/coop-anything/pull/81) (write-up + directory entry + prototype) was merged earlier. |
+| Filters and names | Runtime-verified: the panel shows ALL/COMBAT/MULTI/SYSTEM tabs and combat lines with the engine's creature names ("Морриган attacks Огр", "Айдан attacks Огр", "Огр died"); see `docs/images/event-log-filters.png`. Clicking a tab is not yet exercised by hand. |
 ## Next actions
 
-1. Verify the filter tabs and folding by hand in the running game; add scrolling through history and event details.
-2. Player names in the protocol so multiplayer lines say 'Vlad joined' (creature names already work for combat).
-3. Replicate combat animations/effects between the games (the remaining visual gap).
+1. Verify the filter tabs and folding by hand; add scrolling through history and event details.
+2. Send the owner the diff and ask them to review/undraft PR #141.
+3. Replicate combat animations/effects between the games; then loot and bodybags.
 4. Stop the mirrored creature from playing its old command animation after a fight ('runs in place').
-5. Area transitions with object-id alignment (OnAreasBuild).
+5. Area transitions with object-id alignment (OnAreasBuild); a host/join menu.
 6. A second physical PC over the LAN, then the internet transport (Steam relay).
 7. Owner decisions: publish the 0.6.0 release artifact (includes the SWF).
-8. coop-anything contribution: check the fork/PR state and finish the write-up there.
 

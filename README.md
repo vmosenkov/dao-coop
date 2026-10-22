@@ -51,3 +51,4 @@ Logs: `Documents\BioWare\Dragon Age\daolib\loader.log` and `daocoop.log`.
 ## Licence
 
 GPLv3, as DAOLib (the plugin compiles the library in).
+
