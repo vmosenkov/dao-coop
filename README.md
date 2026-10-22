@@ -48,6 +48,30 @@ Never deploy into your real game. The isolated copy used for testing is
 
 Logs: `Documents\BioWare\Dragon Age\daolib\loader.log` and `daocoop.log`.
 
+## Building the in-game screen
+
+The event log panel in the HUD is a plugin-owned SWF 8 movie built from
+ActionScript 2 (`ui/eventlog/frame_1/DoAction.as`) with FFDec, which imports
+the game's own fonts. Build it before the plugin (the plugin copies the movie
+beside its DLL through CMake's `FILES`):
+
+```powershell
+python tools\movie.py --ffdec C:\Modding\ffdec_26.3.0 coop_eventlog
+```
+
+`docs\UI.md` has the pipeline, the tests and the screenshots.
+
+## The coop-anything hub
+
+The game's write-up and directory entry live in
+[cranebeaker/coop-anything](https://github.com/cranebeaker/coop-anything):
+`games/dragon-age-origins/README.md` and `data/directory.yaml`. The first
+contribution ([PR #81](https://github.com/cranebeaker/coop-anything/pull/81))
+was merged; the current update (combat arbitration, death/revive, guest
+rejoin, in-game Event Log, directory entry to `alpha`) is
+[PR #141](https://github.com/cranebeaker/coop-anything/pull/141), left as a
+draft for the owner's review.
+
 ## Licence
 
 GPLv3, as DAOLib (the plugin compiles the library in).
