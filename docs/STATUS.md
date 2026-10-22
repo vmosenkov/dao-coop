@@ -243,14 +243,19 @@ Draft pending the owner's review.
 | Bug | The event log panel showed in the main menu, before any save was loaded: `AddScreen` was followed by `ShowScreen` unconditionally from the first frames. |
 | Fix | `EventLogUi.cpp` now checks `dao::CClientExoApp::CurrentMode()`: the screen is shown only in explore or combat mode, hidden (`HideScreen`) in the main menu, the pregame and the loading screens, and no events/view size are pushed outside a session. |
 | Test | New `tools\ui-menu-test.ps1`: one instance with no autoload stays at the main menu; the log has `ui: event log screen added` but no `screen shown`, the screenshot has no panel — **PASS**. Then `tools\ui-shot.ps1`: after the world loads, `ui: event log screen shown` appears and the panel is in the screenshot. Both screenshots use `PrintWindow` (works with a background game window). See `docs/images/event-log-no-menu.png` and `docs/images/event-log-in-world.png`. The release package `dao-coop-0.7.0.zip` was rebuilt with the fix and both tests pass on the release build (`ui-menu-test` PASS, `ui-shot` shows the panel only after the world loads). |
+## Round 16 — owner's two bugs: duplicate announcement and the run animation (2026-10-23)
+
+| Item | Evidence |
+|---|---|
+| Duplicate "Another player joined the game" | `Notify` no longer calls `DisplayStatusMessage`; the in-game event log is now the only on-screen place for session events (the file log keeps everything). On the host, a join shows the line only in the panel: no large message is in `docs/images/walk-host.png` / `docs/images/walk-guest.png`, and the screenshots from the join test show the panel only. |
+| Mirrored creature's run animation | A teleport never plays a run animation, so a gap under 3 m is now walked with the game's own move order: `dao::orders::MoveTo(puppet, target)` about three times a second, and the creature's movement controller plays walk/run. A teleport remains for gaps over 3 m, for a walk with no progress for a second (a wall), and it clears the queue then; the first frames of an attack still skip all movement. The net line has a new `puppet_walks` counter. New `tools\walk-test.ps1` (host + guest join, both drive their creature for 90 s): **PASS** — host 33 drive orders, 248 puppet move orders, puppet distance 0.56 m; guest 15 drive orders, 209 puppet move orders, 0.77 m; both in the same area. |
 ## Next actions
 
 1. Owner playtest: two PCs on the LAN, then an internet transport (Steam relay is the planned one).
-2. Verify the filter tabs and folding by hand; add scrolling through history and event details.
-3. Review and undraft PR #141 in coop-anything (the 0.7.0 package can be named there too).
-4. Replicate combat animations/effects between the games; then loot and bodybags.
-5. World-door area transitions (needs a way to test a transition; the API exposes DoAreaTransition but no walkable waypoint lookup yet).
-6. An in-game host/join menu to replace the ini file.
-7. Publish the 0.7.0 artifact when the owner says so (the repository rules keep releases to the owner).
-
+2. Check the run animation and the notification fix by hand in a real session.
+3. Verify the filter tabs and folding by hand; add scrolling through history and event details.
+4. Review and undraft PR #141 in coop-anything.
+5. Replicate combat animations/effects between the games; then loot and bodybags.
+6. World-door area transitions; an in-game host/join menu to replace the ini file.
+7. Rebuild and re-test the 0.7.0 package after this round.
 

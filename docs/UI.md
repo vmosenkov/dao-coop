@@ -127,3 +127,9 @@ half: after the world loads the log says `ui: event log screen shown`, and the
 panel is in the screenshot (`docs/images/event-log-in-world.png`). Both
 screenshots are taken with `PrintWindow`, so they work even when the game is not
 the foreground window.
+
+## One place for events: the panel (2026-10-23)
+
+The plugin no longer shows a floating `DisplayStatusMessage` for session
+events: `Notify` only writes the file log and the `EventLog`, and the panel is
+the player-facing surface. A join is therefore announced once, in the panel.

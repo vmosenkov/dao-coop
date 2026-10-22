@@ -68,6 +68,9 @@ constexpr std::uint64_t kFramesBetweenLoadTries = 120;
 constexpr std::uint64_t kFramesBetweenSends = 3;     // about 20 Hz
 constexpr std::uint64_t kFramesBetweenMoves = 300;   // about five seconds
 constexpr float kApplyTolerance = 0.15F;             // metres
+// A gap this small is walked with a real move order, so the mirrored creature's
+// own movement controller plays its run animation; longer gaps are teleported.
+constexpr float kPuppetWalkRange = 3.0F;             // metres
 constexpr float kDriveRadius = 6.0F;                 // metres around the anchor
 
 enum class Role
@@ -124,6 +127,11 @@ std::uint64_t g_worldStartFrame = 0;
 dao::ObjectId g_puppetId = dao::kInvalidObject;
 std::uint64_t g_puppetApplied = 0;
 float g_puppetDistance = 0.0F;
+std::uint64_t g_puppetMoveFrame = 0;
+std::uint64_t g_puppetMoveStart = 0;
+int g_puppetMoves = 0;            // move orders sent in this walk (0 = not walking)
+int g_puppetWalks = 0;            // move orders sent in total, for the net log
+float g_puppetWalkBest = 1.0e9F;  // closest the walk has come, to spot a wall
 
 // Milestone 5: the hostile the host keeps in sync. It is spawned before the
 // handoff save, so the guest loads a world with the same creature and id.
@@ -149,21 +157,12 @@ float g_demoOgreHealth = 1500.0F;
 // the demonstration, so a single order is not enough).
 std::uint64_t g_demoNextAttackOrder = 0;
 
-// Session event log: multiplayer/world/system events go to the file log and on
-// screen; combat events stay in the log for now (a real panel can read them).
+// Session event log: everything the player should see goes to the log and to
+// the in-game panel; the plugin shows no separate floating message.
 void Notify(coop::EventCategory category, const std::string &text)
 {
     coop::EventLog::Get().Add(category, text);
     spdlog::info("event: [{}] {}", coop::EventCategoryName(category), text);
-    // DEBUG_PrintToScreen is a no-op in the shipped game; DisplayStatusMessage
-    // is the verified path (FloatyLayer). Throttled so a burst cannot flood it.
-    static std::uint64_t nextScreenFrame = 0;
-    if (category != coop::EventCategory::Combat && dao::FrameCount() >= nextScreenFrame)
-    {
-        const std::wstring wide(text.begin(), text.end());
-        dao::script::api::DisplayStatusMessage(wide, 0xFFFFFF);
-        nextScreenFrame = dao::FrameCount() + 40;
-    }
 }
 
 // The engine's name for a creature ("Aedan", "Dog", ...), as UTF-8 for the log.
@@ -1610,17 +1609,64 @@ void NetFrame()
                 // still track each other and do not drift apart.
                 const auto busyIt = g_busyCreatures.find(g_remote.objectId);
                 const auto startedIt = g_lastAttackStart.find(g_remote.objectId);
+                const std::uint64_t now = dao::FrameCount();
                 const bool inSwing = busyIt != g_busyCreatures.end() && busyIt->second > 0 &&
                                      startedIt != g_lastAttackStart.end() &&
-                                     dao::FrameCount() - startedIt->second < 30;
+                                     now - startedIt->second < 30;
+                const bool attackRecent =
+                    startedIt != g_lastAttackStart.end() && now - startedIt->second < 120;
                 if (!inSwing && distance > kApplyTolerance)
                 {
                     dao::Vector target{};
                     target.x = g_remote.x;
                     target.y = g_remote.y;
                     target.z = g_remote.z;
-                    dao::script::api::SetPosition(g_remote.objectId, target);
-                    ++g_puppetApplied;
+                    if (!attackRecent && distance < kPuppetWalkRange)
+                    {
+                        // Walk there with the game's own move order: the
+                        // creature's movement controller then plays its run
+                        // animation (a teleport never does).
+                        if (g_puppetMoves == 0)
+                        {
+                            g_puppetMoveStart = now;
+                            g_puppetWalkBest = distance;
+                        }
+                        if (now >= g_puppetMoveFrame)
+                        {
+                            g_puppetMoveFrame = now + 20;
+                            dao::orders::MoveTo(g_remote.objectId, target);
+                            ++g_puppetMoves;
+                            ++g_puppetWalks;
+                        }
+                        if (distance < g_puppetWalkBest - 0.05F)
+                        {
+                            g_puppetWalkBest = distance;
+                        }
+                        // Walking into a wall: after a moment with no progress,
+                        // put the creature where it belongs instead.
+                        if (g_puppetMoves > 0 && now - g_puppetMoveStart > 60 &&
+                            distance >= g_puppetWalkBest - 0.05F)
+                        {
+                            dao::script::api::SetPosition(g_remote.objectId, target);
+                            dao::script::api::ClearAllCommands(g_remote.objectId, 1);
+                            ++g_puppetApplied;
+                            g_puppetMoves = 0;
+                        }
+                    }
+                    else
+                    {
+                        dao::script::api::SetPosition(g_remote.objectId, target);
+                        if (!attackRecent)
+                        {
+                            dao::script::api::ClearAllCommands(g_remote.objectId, 1);
+                        }
+                        ++g_puppetApplied;
+                        g_puppetMoves = 0;
+                    }
+                }
+                else if (distance <= kApplyTolerance)
+                {
+                    g_puppetMoves = 0;
                 }
                 // Keep the remote creature's health in step too. While the
                 // other player is alive their creature counts as a living party
@@ -1766,13 +1812,14 @@ void NetFrame()
             std::snprintf(line, sizeof line,
                           "net role=%s local=0x%08x remote=0x%08x puppet=0x%08x local (%.2f, %.2f, %.2f) area 0x%08x "
                           "remote (%.2f, %.2f, %.2f) area 0x%08x distance %.2f applied %llu puppet_applied %llu "
-                          "puppet_distance %.2f hostiles %u hostile0=0x%08x hostile0_health %.1f local_hostile=0x%08x "
+                          "puppet_distance %.2f puppet_walks %d hostiles %u hostile0=0x%08x hostile0_health %.1f local_hostile=0x%08x "
                           "local_hostile_health %.1f hostile_applied %llu hostile_distance %.2f sent %llu recv %llu "
                           "dropped %llu",
                           g_role == Role::Host ? "host" : "guest", controlled, g_remote.objectId, g_puppetId,
                           localPosition.x, localPosition.y, localPosition.z, local->AreaId(), g_remote.x, g_remote.y,
                           g_remote.z, g_remote.areaId, distance, static_cast<unsigned long long>(g_applied),
                           static_cast<unsigned long long>(g_puppetApplied), g_puppetDistance,
+                          g_puppetWalks,
                           static_cast<unsigned>(g_remote.hostileCount), g_remote.hostiles[0].id,
                           g_remote.hostiles[0].health, localHostile, localHostileHealth,
                           static_cast<unsigned long long>(g_hostileApplied), g_hostileDistance,

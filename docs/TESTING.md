@@ -171,28 +171,99 @@ address `192.168.56.1`: both instances bound `0.0.0.0`, logged `sending to
 been tried; the host must allow inbound UDP 45830 and TCP 45832, the guest UDP
 45831.
 
-## M3 — in-game join
+## M7 — combat arbitration
 
-Host starts hosting (options screen button or key), the guest enters the host
-address. Pass: from main menus only, both end up in the same area with the
-same object ids (log a hash of the party ids and area id on both sides) within
-60 s, and the guest's save never overwrites an existing character folder.
+```powershell
+.\tools\attack-test.ps1
+```
 
-## M4 — combat sync
+The guest's controlled creature attacks the host's ogre. The guest's plugin
+turns its attack command into a request (attacker, target, request id) instead
+of letting its local game resolve it; the host validates the request against the
+live world (known guest, monotonic request id, both objects exist, target
+alive, same area, hostile target), gives its own game the attack order
+(`dao::orders::Attack`) and answers with the result. The host repeats the order
+every ~120 frames so the swing completes.
 
-Host stages a fight; guest attacks the same hostile. Pass: one hostile, one
-death, each side logs the same health curve; loot/bodybag appears once;
-the guest hears the host's damage within 500 ms.
+Pass: the host logs `attack: request … accepted`, the guest logs the same
+request id as `accepted`, the ogre's health falls in the host's game, and the
+guest's mirrored copy follows. **Verified 2026-10-23 (PASS)** on the debug and
+the release build.
 
-## M5 — transitions and saves
+## M8 — death and revival
 
-15 consecutive area transitions host-driven, guest following. Pass after each:
-party ids and area id hash equal on both sides, no guest crash. Then host
-saves, guest rejoins, and the world matches.
+```powershell
+.\tools\death-test.ps1
+```
 
+The host player is killed on purpose (test hook `DAOCOOP_TEST_KILL_PLAYER`); the
+world must keep running while a party member is alive. Three seconds after the
+fall the hostile is defeated through the second test hook
+(`DAOCOOP_TEST_VICTORY`), and the revive path (`RevivePartyAfterFight`) must set
+the fallen party's health from zero to its maximum and return control to the
+host's avatar. A corpse left in the hostile table must not count as a fight.
+
+Pass: the log says the host player is down, state lines continue after the fall,
+`revive:` lines appear, and the avatar's health is above zero again.
+**Verified 2026-10-23 (PASS).**
+
+## M9 — guest rejoin after the host loads another save
+
+```powershell
+.\tools\reload-test.ps1
+```
+
+Mid-session the host loads a second save (test hook `DAOCOOP_TEST_RELOAD`). The
+host's `OnGameLoaded` (second and later loads) marks the world reloaded,
+re-saves the transfer slot and serves it again; the guest sees the flag, resets
+its join state, receives the new slot, loads it (loading screen) and re-selects
+its party member.
+
+Pass: host logs that it loaded and served the new world, guest logs the reload
+flag, the received save and `game loaded: slot 91`, and the guest rejoins.
+**Verified 2026-10-23 (PASS)** on the debug and the release build.
+
+## M10 — in-game event log and its lifecycle
+
+```powershell
+.\tools\movie.py --ffdec C:\Modding\ffdec_26.3.0 coop_eventlog   # the SWF
+.\tools\ui-shot.ps1          # in a session: the panel appears
+.\tools\ui-menu-test.ps1     # at the main menu: the panel does not appear
+.\tools\ui-join-shot.ps1     # two clients: a real event reaches the panel
+```
+
+The panel is a plugin-owned SWF 8 screen (ActionScript 2, built by `movie.py`
+with FFDec) added with `dao::gui::AddScreen` and filled from `EventLog` through
+`Movie::SetArray`/`SetVariable` when the log's revision changes. It is shown
+only in explore/combat mode and hidden in the main menu, the pregame and the
+loading screens.
+
+Pass: `ui-shot` logs `ui: event log screen shown` and the panel is in the
+screenshot; `ui-menu-test` logs `ui: event log screen added` but no `shown` and
+the menu screenshot has no panel; `ui-join-shot` shows a real
+`Another player joined the game` event in the panel. **Verified 2026-10-23
+(PASS)**, including after the lifecycle fix, on the debug and the release build.
+
+## M12 — mirrored creature walks (run animation)
+
+```powershell
+.\tools\walk-test.ps1
+```
+
+Both players walk their own creature (the plugin's drive orders), so each game
+has to move the other player's creature. A gap under 3 m is walked with
+`dao::orders::MoveTo` (the creature's own movement controller plays walk/run),
+larger gaps and stalled walks are teleported; the net line carries
+`puppet_walks`.
+
+Pass: both sides log drive orders and at least ten puppet move orders, the
+puppet distance stays under 2 m, and both are in the same area.
+**Verified 2026-10-23 (PASS):** host 33 drive orders / 248 puppet walks /
+0.56 m; guest 15 / 209 / 0.77 m.
 ## Automated rig (later)
 
 `DAOEluvianMCP` (public, GPLv3) is the intended bench: it drives a live game
 over HTTP/MCP with its own instance/port per copy, so the same scenarios can
 run with no mouse. Our plugin can register its own test tools/events through
 its C interface (`src/api/EluvianAPI.h`, MIT) once the rig is set up.
+
