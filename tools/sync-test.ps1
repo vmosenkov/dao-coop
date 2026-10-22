@@ -125,12 +125,31 @@ foreach ($name in 'host', 'guest') {
             if ($applied -lt 10) { $verdict = $false }
         }
         else { Write-Host '  no applied count in the last net line'; $verdict = $false }
-        if ($lastNet -match 'distance ([0-9.]+)') {
-            $distance = [double]$Matches[1]
-            Write-Host ("  last distance host->guest: {0}" -f $distance)
-            if ($distance -gt $MaxDistance) { $verdict = $false }
+        # With two different avatars the distance between them says nothing;
+        # the mirror distance of the puppet is the sync error. One avatar (the
+        # same id on both sides) is compared directly.
+        $localId = $null
+        $remoteId = $null
+        if ($lastNet -match 'local=(0x[0-9a-f]+) remote=(0x[0-9a-f]+)') {
+            $localId = $Matches[1]
+            $remoteId = $Matches[2]
         }
-        else { Write-Host '  no distance in the last net line'; $verdict = $false }
+        if ($localId -and $remoteId -and $localId -eq $remoteId) {
+            if ($lastNet -match '\bdistance ([0-9.]+)') {
+                $distance = [double]::Parse($Matches[1], [Globalization.CultureInfo]::InvariantCulture)
+                Write-Host ("  last distance (same avatar): {0}" -f $distance)
+                if ($distance -gt $MaxDistance) { $verdict = $false }
+            }
+            else { Write-Host '  no distance in the last net line'; $verdict = $false }
+        }
+        else {
+            if ($lastNet -match 'puppet_distance ([0-9.]+)') {
+                $puppetDistance = [double]::Parse($Matches[1], [Globalization.CultureInfo]::InvariantCulture)
+                Write-Host ("  last puppet distance: {0}" -f $puppetDistance)
+                if ($puppetDistance -gt $MaxDistance) { $verdict = $false }
+            }
+            else { Write-Host '  no puppet_distance in the last net line'; $verdict = $false }
+        }
     }
 }
 

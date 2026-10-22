@@ -148,12 +148,12 @@ foreach ($name in 'host', 'guest') {
             if ($applied -lt 10) { $verdict = $false }
         }
         else { Write-Host '  no applied count'; $verdict = $false }
-        if ($lastNet -match 'distance ([0-9.]+)') {
-            $distance = [double]$Matches[1]
-            Write-Host ("  last distance host->guest: {0}" -f $distance)
-            if ($distance -gt $MaxDistance) { $verdict = $false }
+        if ($lastNet -match 'puppet_distance ([0-9.]+)') {
+            $puppetDistance = [double]::Parse($Matches[1], [Globalization.CultureInfo]::InvariantCulture)
+            Write-Host ("  last puppet distance: {0}" -f $puppetDistance)
+            if ($puppetDistance -gt $MaxDistance) { $verdict = $false }
         }
-        else { Write-Host '  no distance'; $verdict = $false }
+        else { Write-Host '  no puppet_distance'; $verdict = $false }
     }
 }
 if ($areas.Count -eq 2) {

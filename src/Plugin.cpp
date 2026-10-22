@@ -46,6 +46,7 @@
 #include <spdlog/spdlog.h>
 
 #include <atomic>
+#include <cstring>
 #include <cctype>
 #include <cmath>
 #include <cstdint>
@@ -88,6 +89,7 @@ coop::Transport g_net;
 std::uint16_t g_hostPort = 45830;
 std::uint16_t g_guestPort = 45831;
 std::uint32_t g_sequence = 0;
+std::uint32_t g_eventSequence = 0; // ids of the events sent to the other player
 coop::StatePacket g_remote{};
 bool g_haveRemote = false;
 std::uint64_t g_applied = 0;
@@ -163,6 +165,16 @@ void Notify(coop::EventCategory category, const std::string &text)
 {
     coop::EventLog::Get().Add(category, text);
     spdlog::info("event: [{}] {}", coop::EventCategoryName(category), text);
+    // Send the line to the other game: the two players should read the same
+    // session log. Fire and forget; a lost event is only a missing line.
+    if (g_net.IsOpen() && g_role != Role::None)
+    {
+        coop::EventPacket packet{};
+        packet.category = static_cast<std::uint8_t>(category);
+        packet.sequence = ++g_eventSequence;
+        std::snprintf(packet.text, sizeof packet.text, "%s", text.c_str());
+        g_net.Send(packet);
+    }
 }
 
 // The engine's name for a creature ("Aedan", "Dog", ...), as UTF-8 for the log.
@@ -871,6 +883,18 @@ void SpawnHostile()
     // afterwards. It stays active=false so the save carries it without a fight.
     dao::script::api::SetLocalInt(hostile, L"CREATURE_RULES_FLAG0", 8);
     dao::script::api::SetObjectActive(hostile, 0);
+    // A creature made by CreateObject does not always land on a hostile team
+    // (seen in the Fort Drakon save): give it a team of its own and make that
+    // team hostile to the player's, or GetNearestObjectByHostility never
+    // returns it and the health channel has nothing to carry.
+    {
+        const dao::ObjectId playerId = g_myAvatar != dao::kInvalidObject ? g_myAvatar : dao::party::Controlled();
+        const std::int32_t playerTeam = dao::script::api::GetTeamId(playerId);
+        const std::int32_t hostileTeam = playerTeam + 1;
+        dao::script::api::SetTeamId(hostile, hostileTeam);
+        dao::script::api::SetGroupHostility(playerTeam, hostileTeam, 1);
+        spdlog::info("combat: hostile team {} (player team {}), groups made hostile", hostileTeam, playerTeam);
+    }
     spdlog::info("combat: hostile spawned 0x{:08x} from ogre_default.utc (AI off, inactive)", hostile);
 }
 
@@ -1350,6 +1374,38 @@ void ClearStalePuppetCommands(std::uint64_t frame)
     spdlog::info("puppet: dropped a stale command while no fight is near");
 }
 
+// The host's answer to a guest attack request. A bad-attacker answer is retried
+// with the same id: the host may simply not have seen the guest yet.
+void HandleAttackResult(const coop::AttackResultPacket &answer)
+{
+    const auto result = static_cast<coop::AttackResult>(answer.flags);
+    if (result == coop::AttackResult::Accepted)
+    {
+        ++g_attackRequestsAccepted;
+        g_attackAwaiting = false;
+        g_attackResends = 0;
+    }
+    else
+    {
+        ++g_attackRequestsRefused;
+        if (result == coop::AttackResult::BadAttacker && g_attackAwaiting && g_attackResends < 2)
+        {
+            ++g_attackResends;
+            g_pendingAttack.valid = true;
+            g_pendingAttack.requestId = g_attackLastRequest;
+            g_pendingAttack.attacker = g_attackLastAttacker;
+            g_pendingAttack.target = g_attackLastTarget;
+            spdlog::info("attack: retrying request {} (attempt {})", g_attackLastRequest, g_attackResends + 1);
+        }
+        else
+        {
+            g_attackAwaiting = false;
+        }
+    }
+    spdlog::info("attack: result for request {} (attacker 0x{:08x}, target 0x{:08x}): {}", answer.requestId,
+                 answer.attacker, answer.target, AttackResultName(result));
+}
+
 void NetFrame()
 {
     if (g_role == Role::None || !g_net.IsOpen() || !InWorld())
@@ -1439,16 +1495,59 @@ void NetFrame()
         }
     }
 
-    // Receive everything waiting; keep the newest.
+    // Receive everything waiting in one pass and dispatch by kind: separate
+    // Receive calls per kind each scan the socket and a busy kind starves the
+    // others.
     coop::StatePacket incoming{};
     bool gotPacket = false;
-    for (int i = 0; i < 32 && g_net.Receive(incoming); ++i)
+    coop::Transport::ReceivedPacket packet{};
+    for (int i = 0; i < 32 && g_net.ReceiveAny(packet); ++i)
     {
-        gotPacket = true;
-        if (!g_haveRemote || incoming.sequence > g_remote.sequence)
+        switch (packet.kind)
         {
-            g_remote = incoming;
-            g_haveRemote = true;
+        case coop::PacketKind::State:
+        {
+            std::memcpy(&incoming, packet.data, sizeof incoming);
+            gotPacket = true;
+            if (!g_haveRemote || incoming.sequence > g_remote.sequence)
+            {
+                g_remote = incoming;
+                g_haveRemote = true;
+            }
+            break;
+        }
+        case coop::PacketKind::AttackRequest:
+        {
+            if (g_role == Role::Host)
+            {
+                coop::AttackRequestPacket request{};
+                std::memcpy(&request, packet.data, sizeof request);
+                HandleGuestAttack(app, request);
+            }
+            break;
+        }
+        case coop::PacketKind::AttackResult:
+        {
+            if (g_role == Role::Guest)
+            {
+                coop::AttackResultPacket answer{};
+                std::memcpy(&answer, packet.data, sizeof answer);
+                HandleAttackResult(answer);
+            }
+            break;
+        }
+        case coop::PacketKind::Event:
+        {
+            coop::EventPacket event{};
+            std::memcpy(&event, packet.data, sizeof event);
+            const std::string text(event.text);
+            const auto category = static_cast<coop::EventCategory>(event.category);
+            coop::EventLog::Get().Add(category, text);
+            spdlog::info("event(remote): [{}] {}", coop::EventCategoryName(category), text);
+            break;
+        }
+        default:
+            break;
         }
     }
     if (gotPacket)
@@ -1461,7 +1560,13 @@ void NetFrame()
         }
         if (!g_sawRemote)
         {
-            Notify(coop::EventCategory::Multiplayer, "Another player joined the game");
+            // The guest announces itself from its join path ("Joined the
+            // host's game"), and both lines reach both logs through the event
+            // packet, so only the host writes this one here.
+            if (g_role == Role::Host)
+            {
+                Notify(coop::EventCategory::Multiplayer, "Another player joined the game");
+            }
             g_sawRemote = true;
         }
     }
@@ -1470,6 +1575,7 @@ void NetFrame()
         Notify(coop::EventCategory::Multiplayer, "Connection to the other player lost");
         g_connectionLost = true;
     }
+
     if (g_haveRemote)
     {
         const bool reload = (g_remote.flags & coop::kWorldReloaded) != 0;
@@ -1504,49 +1610,6 @@ void NetFrame()
             g_attackLastAttacker = request.attacker;
             g_attackLastTarget = request.target;
             g_pendingAttack.valid = false;
-        }
-    }
-    if (g_role == Role::Host)
-    {
-        coop::AttackRequestPacket request{};
-        if (g_net.Receive(request))
-        {
-            HandleGuestAttack(app, request);
-        }
-    }
-    else
-    {
-        coop::AttackResultPacket answer{};
-        if (g_net.Receive(answer))
-        {
-            const auto result = static_cast<coop::AttackResult>(answer.flags);
-            if (result == coop::AttackResult::Accepted)
-            {
-                ++g_attackRequestsAccepted;
-                g_attackAwaiting = false;
-                g_attackResends = 0;
-            }
-            else
-            {
-                ++g_attackRequestsRefused;
-                // The host may simply not have seen the guest yet; repeat the
-                // same request instead of losing the player's action.
-                if (result == coop::AttackResult::BadAttacker && g_attackAwaiting && g_attackResends < 2)
-                {
-                    ++g_attackResends;
-                    g_pendingAttack.valid = true;
-                    g_pendingAttack.requestId = g_attackLastRequest;
-                    g_pendingAttack.attacker = g_attackLastAttacker;
-                    g_pendingAttack.target = g_attackLastTarget;
-                    spdlog::info("attack: retrying request {} (attempt {})", g_attackLastRequest, g_attackResends + 1);
-                }
-                else
-                {
-                    g_attackAwaiting = false;
-                }
-            }
-            spdlog::info("attack: result for request {} (attacker 0x{:08x}, target 0x{:08x}): {}", answer.requestId,
-                         answer.attacker, answer.target, AttackResultName(result));
         }
     }
 
@@ -2065,6 +2128,14 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
     g_addCompanion = g_role == Role::Host && Flag("add_companion", "DAOCOOP_ADD_COMPANION");
     const std::string selectParty = Setting("select_party", "DAOCOOP_SELECT_PARTY");
     g_selectParty = selectParty.empty() ? -1 : std::atoi(selectParty.c_str());
+    // A guest that was given no party index takes the first companion: two
+    // players on the same Warden would fight each other for the one input and
+    // the mirror would keep teleporting the other one back.
+    if (g_role == Role::Guest && g_selectParty < 0)
+    {
+        g_selectParty = 1;
+        spdlog::info("party: the guest will take party index 1 by default");
+    }
     if (g_addCompanion)
     {
         spdlog::info("companion on: the host creates and hires a mabari before the handoff save");
@@ -2291,6 +2362,8 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
     dao::OnFrame(&Frame);
     return true;
 }
+
+
 
 
 

@@ -27,7 +27,7 @@ namespace coop
 // 'DCOC' in little-endian, so a wrong port or an unrelated datagram is cheap
 // to reject.
 inline constexpr std::uint32_t kMagic = 0x434F4344;
-inline constexpr std::uint16_t kVersion = 7;
+inline constexpr std::uint16_t kVersion = 8;
 
 // How many nearby hostiles the host mirrors.
 inline constexpr std::uint32_t kMaxHostiles = 4;
@@ -39,6 +39,8 @@ enum class PacketKind : std::uint8_t
     AttackRequest = 2,
     // The host's answer to an AttackRequest; the outcome arrives as state.
     AttackResult = 3,
+    // One session event, so both players read the same log.
+    Event = 4,
 };
 
 // One hostile creature as the host sees it.
@@ -115,6 +117,20 @@ struct AttackResultPacket
 };
 static_assert(sizeof(AttackResultPacket) == 20, "the packet is its own wire format");
 
+// One session event: its category (EventCategory) and its text as UTF-8, so a
+// guest shows the host's events and the host shows the guest's. Fire and
+// forget: a lost event is only a missing log line.
+struct EventPacket
+{
+    std::uint32_t magic = kMagic;
+    std::uint16_t version = kVersion;
+    PacketKind kind = PacketKind::Event;
+    std::uint8_t category = 0; // EventCategory
+    std::uint32_t sequence = 0;
+    char text[220] = {}; // UTF-8, NUL-terminated; 219 bytes of text
+};
+static_assert(sizeof(EventPacket) == 232, "the packet is its own wire format; keep it fixed");
+
 // Why the host did or did not queue the attack.
 enum class AttackResult : std::uint8_t
 {
@@ -147,6 +163,7 @@ class Transport
     bool Send(const StatePacket &packet);
     bool Send(const AttackRequestPacket &packet);
     bool Send(const AttackResultPacket &packet);
+    bool Send(const EventPacket &packet);
 
     // Takes the next datagram of the kind asked for, if one is waiting; false
     // when there is none. Never blocks. A datagram of another kind is kept in
@@ -154,6 +171,20 @@ class Transport
     bool Receive(StatePacket &packet);
     bool Receive(AttackRequestPacket &packet);
     bool Receive(AttackResultPacket &packet);
+    bool Receive(EventPacket &packet);
+
+    // One datagram of any kind, for a caller that dispatches a whole batch
+    // itself: several Receive calls per frame each scan the socket and a busy
+    // kind can starve the others.
+    struct ReceivedPacket
+    {
+        PacketKind kind = PacketKind::State;
+        std::size_t size = 0;
+        std::uint8_t data[sizeof(EventPacket)] = {}; // the largest packet
+    };
+    // Takes the next datagram from the peer of any kind; false when none is
+    // waiting. Never blocks.
+    bool ReceiveAny(ReceivedPacket &packet);
 
     std::uint64_t Sent() const { return sent_; }
     std::uint64_t Received() const { return received_; }
@@ -179,7 +210,7 @@ class Transport
 
     // One datagram of a kind the caller did not ask for, kept for the next
     // Receive call. It is always one of the fixed packet types.
-    static constexpr std::size_t kMaxPacketSize = sizeof(StatePacket);
+    static constexpr std::size_t kMaxPacketSize = sizeof(EventPacket); // the largest packet
     std::uint8_t pendingData_[kMaxPacketSize] = {};
     std::size_t pendingSize_ = 0;
     PacketKind pendingKind_ = PacketKind::State;
@@ -187,6 +218,8 @@ class Transport
 };
 
 } // namespace coop
+
+
 
 
 

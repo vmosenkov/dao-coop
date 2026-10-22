@@ -260,10 +260,28 @@ Pass: both sides log drive orders and at least ten puppet move orders, the
 puppet distance stays under 2 m, and both are in the same area.
 **Verified 2026-10-23 (PASS):** host 33 drive orders / 248 puppet walks /
 0.56 m; guest 15 / 209 / 0.77 m.
+## M13 — independent players and a shared event log
+
+```powershell
+.\tools\independence-test.ps1
+```
+
+The host stands still and serves the handoff save; the guest joins with no
+party index configured, so the plugin picks index 1 for it, and then walks its
+own creature. The test asserts that the two controlled ids differ, that the
+mirror never rewrites the guest's own position (`applied` stays 0), that the
+guest gets at least 1 m away from the standing host, that the host's copy
+follows it, and that both logs contain both join lines (one written locally,
+the other arriving in the event packet).
+
+**Verified 2026-10-23 (PASS):** host `0x0000007a`, guest `0x0000211c`,
+guest applied 0, furthest distance 2.14 m, host puppet distance 1.12 m, both
+logs hold "Another player joined the game" and "Joined the host's game".
 ## Automated rig (later)
 
 `DAOEluvianMCP` (public, GPLv3) is the intended bench: it drives a live game
 over HTTP/MCP with its own instance/port per copy, so the same scenarios can
 run with no mouse. Our plugin can register its own test tools/events through
 its C interface (`src/api/EluvianAPI.h`, MIT) once the rig is set up.
+
 

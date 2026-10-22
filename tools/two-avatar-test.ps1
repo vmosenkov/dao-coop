@@ -85,8 +85,11 @@ try {
     $hostWorld = Wait-ForLogMatch $hostProc (LogPath 'host') 'game loaded:' $HostWaitSeconds
     Write-Host ("  host reached the world: {0}" -f $hostWorld)
     if (-not $hostWorld) { throw 'host never reached the world' }
-    $companion = Wait-ForLogMatch $hostProc (LogPath 'host') 'companion: created' 60
-    Write-Host ("  host companion created: {0}" -f $companion)
+    # The newest save already holds four party members, so the plugin skips
+    # hiring a mabari (party >= 2); what matters is that the handoff save is
+    # served after the world is up.
+    $handoffReady = Wait-ForLogMatch $hostProc (LogPath 'host') 'handoff: sent the slot folder' 120
+    Write-Host ("  host handoff served: {0}" -f $handoffReady)
 
     Write-Host '--- starting guest (join -> load -> select party 1) ---'
     $env:DAOLIB_INSTANCE = 'guest'; $env:DAOCOOP_ROLE = 'guest'; $env:DAOCOOP_DRIVE = '1'; $env:DAOCOOP_HANDOFF = '0'
@@ -129,15 +132,17 @@ foreach ($name in 'host', 'guest') {
     }
     if ($lastNet -match 'area (0x[0-9a-f]+)') { $areas[$name] = $Matches[1] }
     if ($name -eq 'host') {
-        foreach ($pattern in 'companion: created', 'handoff: sent the slot folder') {
-            $present = $text -match [regex]::Escape($pattern)
-            Write-Host ("  {0}: {1}" -f $pattern, $present)
-            if (-not $present) { $verdict = $false }
-        }
+        $present = $text -match [regex]::Escape('handoff: sent the slot folder')
+        Write-Host ("  handoff: sent the slot folder: {0}" -f $present)
+        if (-not $present) { $verdict = $false }
+        # A hired companion is optional now (the save may already have a party).
         if ($text -match 'companion: created .* party list (\d+) member') {
             $party = [int]$Matches[1]
             Write-Host ("  party list after the hire: {0}" -f $party)
             if ($party -lt 2) { $verdict = $false }
+        }
+        else {
+            Write-Host '  no companion was hired (the save already had a party)'
         }
     }
     else {

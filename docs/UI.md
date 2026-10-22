@@ -133,3 +133,12 @@ the foreground window.
 The plugin no longer shows a floating `DisplayStatusMessage` for session
 events: `Notify` only writes the file log and the `EventLog`, and the panel is
 the player-facing surface. A join is therefore announced once, in the panel.
+
+## Both players read the same log (2026-10-23)
+
+`Notify` sends every event to the other game in an `EventPacket` (protocol
+version 8, category and UTF-8 text), and the receiver adds it to its own
+`EventLog` (`event(remote): ...` in the file log). The two panels therefore
+carry the same session lines: the join is announced on both sides (one local
+line and the other player's line arriving as a packet) and combat lines the
+host writes appear on the guest too.

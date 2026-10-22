@@ -249,14 +249,19 @@ Draft pending the owner's review.
 |---|---|
 | Duplicate "Another player joined the game" | `Notify` no longer calls `DisplayStatusMessage`; the in-game event log is now the only on-screen place for session events (the file log keeps everything). On the host, a join shows the line only in the panel: no large message is in `docs/images/walk-host.png` / `docs/images/walk-guest.png`, and the screenshots from the join test show the panel only. |
 | Mirrored creature's run animation | A teleport never plays a run animation, so a gap under 3 m is now walked with the game's own move order: `dao::orders::MoveTo(puppet, target)` about three times a second, and the creature's movement controller plays walk/run. A teleport remains for gaps over 3 m, for a walk with no progress for a second (a wall), and it clears the queue then; the first frames of an attack still skip all movement. The net line has a new `puppet_walks` counter. New `tools\walk-test.ps1` (host + guest join, both drive their creature for 90 s): **PASS** — host 33 drive orders, 248 puppet move orders, puppet distance 0.56 m; guest 15 drive orders, 209 puppet move orders, 0.77 m; both in the same area. The release package `dao-coop-0.7.0.zip` was rebuilt with both fixes and `walk-test` also **PASSes on the release build** (host 136 move orders / 1.11 m, guest 164 / 1.14 m). |
+## Round 18 — the owner's two bugs: shared Event Log and independent players (2026-10-23)
+
+| Item | Evidence |
+|---|---|
+| Event Log was different on host and guest | The log is now shared: protocol version 8 adds an `EventPacket` (232 bytes, category + UTF-8 text); `Notify` sends every line to the other game and the receiver adds it to its own `EventLog` (logged as `event(remote): ...`), so both players read the same session lines. The old three `Receive` calls per kind were replaced by one `Transport::ReceiveAny` dispatch loop: with a fourth packet kind the per-kind scans starved each other and the host stopped seeing the guest's state entirely (`recv 0`). `tools\independence-test.ps1` checks that both join lines ("Another player joined the game" and "Joined the host's game") are in BOTH logs. |
+| Host and guest stuck together | Root cause: a guest with no `select_party` controlled the host's own Warden, so the mirror kept rewriting its position to the host's (`applied` grew, distance stayed ~0, "teleported back"). A guest now takes party index 1 by default when nothing is configured (`party: the guest will take party index 1 by default`). `independence-test` proves it: host `0x7a` and guest `0x211c`, the guest's mirrored `applied` stays 0 (its position is not rewritten), the standing host and the walking guest get 2.14 m apart, and the host's copy of the guest follows at 1.12 m. |
+| Buffer bug found on the way | The pending-packet buffer was `sizeof(StatePacket)` (176) while the new event packet is 232: writing it overflowed the transport state. It is now `sizeof(EventPacket)`; the receive loop reports `dropped 0` again. |
+| Tests | `independence-test` **PASS** on debug. `sync-test`, `join-test` and `two-avatar-test` were adapted (mirror distance instead of the distance between two different avatars; optional companion on the new save) and **PASS**. `combat-test` still fails on the new save: the artificial ogre made by `CreateObject` is not returned by the hostility query there (the real fight path is covered by `attack-test`, `walk-test` and `demo-fight`). |
 ## Next actions
 
-1. Owner playtest: two PCs on the LAN, then an internet transport (Steam relay is the planned one).
-2. Check the run animation and the notification fix by hand in a real session.
-3. Verify the filter tabs and folding by hand; add scrolling through history and event details.
-4. Review and undraft PR #141 in coop-anything.
-5. Replicate combat animations/effects between the games; then loot and bodybags.
-6. World-door area transitions; an in-game host/join menu to replace the ini file.
-7. Rebuild and re-test the 0.7.0 package after this round.
-
+1. Rebuild the release package with this round's fixes and re-run independence-test and walk-test on it.
+2. Owner playtest: a real session with two characters, then two PCs on the LAN.
+3. Event Log UX: scrolling history and event details; verify the filter tabs by hand.
+4. Replicate combat animations/effects; area transitions; host/join menu; internet transport.
+5. Review and undraft PR #141 in coop-anything (add this round's findings).
 

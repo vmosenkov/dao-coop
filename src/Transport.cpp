@@ -150,6 +150,16 @@ bool Transport::Send(const AttackResultPacket &packet)
     return true;
 }
 
+bool Transport::Send(const EventPacket &packet)
+{
+    if (!IsOpen() || !SendOne(static_cast<SOCKET>(socket_), *reinterpret_cast<const sockaddr_in *>(peer_), packet))
+    {
+        return false;
+    }
+    ++sent_;
+    return true;
+}
+
 bool Transport::ReceiveRaw(void *out, std::size_t outSize, PacketKind expected)
 {
     if (!IsOpen())
@@ -213,6 +223,9 @@ bool Transport::ReceiveRaw(void *out, std::size_t outSize, PacketKind expected)
         case PacketKind::AttackResult:
             otherSize = sizeof(AttackResultPacket);
             break;
+        case PacketKind::Event:
+            otherSize = sizeof(EventPacket);
+            break;
         default:
             break;
         }
@@ -228,8 +241,81 @@ bool Transport::ReceiveRaw(void *out, std::size_t outSize, PacketKind expected)
     }
 }
 
+
+bool Transport::ReceiveAny(ReceivedPacket &packet)
+{
+    if (!IsOpen())
+    {
+        return false;
+    }
+    // A datagram of another kind that an older Receive call kept.
+    if (pendingValid_)
+    {
+        packet.kind = pendingKind_;
+        packet.size = pendingSize_;
+        std::memcpy(packet.data, pendingData_, pendingSize_);
+        pendingValid_ = false;
+        ++received_;
+        return true;
+    }
+    const sockaddr_in &peer = *reinterpret_cast<const sockaddr_in *>(peer_);
+    for (;;)
+    {
+        std::uint8_t buffer[256] = {};
+        sockaddr_in from{};
+        int fromSize = sizeof from;
+        const int got = ::recvfrom(static_cast<SOCKET>(socket_), reinterpret_cast<char *>(buffer), static_cast<int>(sizeof buffer), 0,
+                                   reinterpret_cast<sockaddr *>(&from), &fromSize);
+        if (got == SOCKET_ERROR)
+        {
+            return false;
+        }
+        if (!SamePeer(from, peer) || got < static_cast<int>(sizeof(Header)))
+        {
+            ++dropped_;
+            continue;
+        }
+        Header header{};
+        std::memcpy(&header, buffer, sizeof header);
+        if (header.magic != kMagic || header.version != kVersion)
+        {
+            ++dropped_;
+            continue;
+        }
+        std::size_t size = 0;
+        switch (header.kind)
+        {
+        case PacketKind::State:
+            size = sizeof(StatePacket);
+            break;
+        case PacketKind::AttackRequest:
+            size = sizeof(AttackRequestPacket);
+            break;
+        case PacketKind::AttackResult:
+            size = sizeof(AttackResultPacket);
+            break;
+        case PacketKind::Event:
+            size = sizeof(EventPacket);
+            break;
+        default:
+            break;
+        }
+        if (size == 0 || got != static_cast<int>(size))
+        {
+            ++dropped_;
+            continue;
+        }
+        packet.kind = header.kind;
+        packet.size = size;
+        std::memcpy(packet.data, buffer, size);
+        ++received_;
+        return true;
+    }
+}
+
 bool Transport::Receive(StatePacket &packet)
 {
+
     return ReceiveRaw(&packet, sizeof packet, PacketKind::State);
 }
 
@@ -243,5 +329,12 @@ bool Transport::Receive(AttackResultPacket &packet)
     return ReceiveRaw(&packet, sizeof packet, PacketKind::AttackResult);
 }
 
+bool Transport::Receive(EventPacket &packet)
+{
+    return ReceiveRaw(&packet, sizeof packet, PacketKind::Event);
+}
+
 } // namespace coop
+
+
 
