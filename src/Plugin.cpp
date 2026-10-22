@@ -172,6 +172,10 @@ bool g_worldReloadNoticed = false;
 bool g_firstLoadSeen = false;
 float g_lastHostileHealth = -1.0F;
 bool g_hostileDeathAnnounced = false;
+// Combat events: one "attacks" line per creature per 1.5 s, and one
+// "combat started"/"combat ended" transition for the alive-hostile count.
+std::map<dao::ObjectId, std::uint64_t> g_lastAttackLog;
+bool g_combatSeen = false;
 // Test hook: after the guest has joined, load another save on the host to
 // exercise the guest's automatic rejoin.
 bool g_testReload = false;
@@ -1326,7 +1330,26 @@ void NetFrame()
                         found[i].target != dao::kInvalidObject ? found[i].target : 0;
                     packet.hostiles[i].attackSeq = found[i].attackSeq;
                 }
-                // Combat event for the log: the first mirrored hostile died.
+                // Combat events for the log: the fight starting/ending and the
+                // first mirrored hostile dying.
+                int aliveHostiles = 0;
+                for (int i = 0; i < count; ++i)
+                {
+                    if (!found[i].dead && found[i].health > 0.0F)
+                    {
+                        ++aliveHostiles;
+                    }
+                }
+                if (aliveHostiles > 0 && !g_combatSeen)
+                {
+                    Notify(coop::EventCategory::Combat, "Combat started");
+                    g_combatSeen = true;
+                }
+                else if (aliveHostiles == 0 && g_combatSeen)
+                {
+                    Notify(coop::EventCategory::Combat, "Combat ended");
+                    g_combatSeen = false;
+                }
                 if (count > 0 && found[0].health <= 0.0F && g_lastHostileHealth > 0.0F && !g_hostileDeathAnnounced)
                 {
                     Notify(coop::EventCategory::Combat, "The hostile died");
@@ -2056,6 +2079,34 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
             g_lastAttackStart[object] = dao::FrameCount();
             spdlog::info("cmd: 0x{:08x} attack start -> 0x{:08x}", object,
                          attackTarget.has_value() ? *attackTarget : dao::kInvalidObject);
+            // A player-facing combat line, throttled per creature: the technical
+            // command log above stays in the file log.
+            const auto last = g_lastAttackLog.find(object);
+            if (last == g_lastAttackLog.end() || dao::FrameCount() - last->second > 90)
+            {
+                g_lastAttackLog[object] = dao::FrameCount();
+                const dao::ObjectId ourSide =
+                    g_myAvatar != dao::kInvalidObject ? g_myAvatar : dao::party::Controlled();
+                const bool attackerIsHostile =
+                    object == g_hostileId || dao::script::api::IsObjectHostile(ourSide, object) != 0;
+                const dao::ObjectId targetId = attackTarget.value_or(dao::kInvalidObject);
+                if (attackerIsHostile)
+                {
+                    const bool onOurSide =
+                        targetId == ourSide || (g_role == Role::Host && targetId == g_remote.objectId);
+                    Notify(coop::EventCategory::Combat,
+                           onOurSide ? "The enemy attacks your creature" : "The enemy attacks");
+                }
+                else
+                {
+                    std::string who = "Your creature";
+                    if (g_role == Role::Host && object == g_remote.objectId)
+                    {
+                        who = "The other player's creature";
+                    }
+                    Notify(coop::EventCategory::Combat, who + " attacks the enemy");
+                }
+            }
         }
         // Host: remember what each creature is attacking, so the hostile table
         // can tell the guest's copy whom to fight.

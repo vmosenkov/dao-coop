@@ -93,3 +93,13 @@ Screenshots from those runs: `E:\Temp_files\ui-shot.png`,
 DAOTurnBased's `tools/movie.py`, `ui/turnorder/frame_1/DoAction.as` and
 `dev/UI.md` document the same pipeline; our `tools/movie.py` is an adaptation
 of that file under the same GPLv3.
+
+## Combat events and folding (2026-10-23)
+
+The log also carries combat lines from the arbitration path: "Combat started"
+and "Combat ended" from the alive-hostile count, "Your creature attacks the
+enemy" / "The other player's creature attacks the enemy" / "The enemy attacks
+your creature" from the attack commands (throttled to one line per creature per
+1.5 s), and "The hostile died". Technical command lines stay in the file log.
+The panel folds to its last line when clicked; clicking it again unfolds it.
+See `docs/images/event-log-combat.png` for a run with the fight in the panel.

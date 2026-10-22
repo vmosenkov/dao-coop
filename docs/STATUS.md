@@ -203,13 +203,20 @@ Draft pending the owner's review.
 | Smoke test 2 | `tools\ui-join-shot.ps1`: host + guest join; host log `event: [multiplayer] Another player joined the game` then `ui: event log revision 1 (1 line(s))`; guest revision 2. The host screenshot shows "Another player joined the game." — a real `EventLog::Recent()` event drawn by our SWF. |
 | Verified UI API | `dao::gui::AddScreen/ShowScreen/ScreenMovie`, `Movie::SetVariable/SetArray`, `Value::Number/WString`, `HasMovie`, `dao::world::ScreenSize` — all cited in `Gui.h`/`World.h`; no invented calls. |
 | Limits | Panel always visible (no collapse/filters/scroll yet); layout checked at 960x540/1024x768; last eight events of all categories; the movie needs the game's font library (a standalone player needs a stub). |
+## Round 10 — combat events in the in-game log (verified 2026-10-23)
+
+| Item | Evidence |
+|---|---|
+| Combat events | `event: [combat] Combat started`, "Your creature attacks the enemy", "The other player's creature attacks the enemy", "The enemy attacks your creature", "Combat ended", "The hostile died" appear in the host/guest logs during `tools\demo-fight.ps1`; the screen shows them (see `docs/images/event-log-combat.png`). Attack lines are throttled per creature (1.5 s). |
+| Folding | A click on the panel folds it to its latest line and another click unfolds it (`panel.onPress` in `DoAction.as`); the text fields have `hitTestDisable`, so the panel takes the click. Not yet exercised by hand. |
+| Still missing | The attack lines name sides, not creatures (no creature names in the protocol yet); no filters, scrolling or event details; combat is only the attack-start/death events the arbitration sees (miss/damage happen inside DAO's own resolution). |
 ## Next actions
 
-1. Panel UX: collapse/hide, All/Combat/Multiplayer/System filters, scrolling, event details (only after the SWF pipeline, now proven).
-2. Replicate combat events into the log (attack/miss/damage/death) from the arbitration path; keep technical messages in the file log.
+1. Panel UX: filters All/Combat/Multiplayer/System, scrolling, event details; verify folding by hand.
+2. Creature names in the protocol so the log says 'Vlad attacked Hurlock' rather than 'Your creature'.
 3. Replicate combat animations/effects between the games (the remaining visual gap).
 4. Stop the mirrored creature from playing its old command animation after a fight ('runs in place').
 5. Area transitions with object-id alignment (OnAreasBuild).
 6. A second physical PC over the LAN, then the internet transport (Steam relay).
-7. Owner decisions: publish the 0.6.0 release artifact (include the SWF; package.ps1 now copies it).
+7. Owner decisions: publish the 0.6.0 release artifact (includes the SWF).
 

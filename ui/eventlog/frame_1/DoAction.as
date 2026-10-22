@@ -39,6 +39,7 @@ var frameCounter = 0;
 var titleField;
 var lineFields = [];
 var panel;
+var collapsed = false; // a click on the panel folds it to its last line
 
 function stageUnitsFor(width, height) {
     // One screen pixel in stage units (Stage.scaleMode "showAll").
@@ -105,7 +106,25 @@ function makeField(name, depth, sizePx, bold) {
     field.selectable = false;
     field.multiline = true;
     field.wordWrap = true;
+    field.hitTestDisable = true; // the panel itself takes the click
     return field;
+}
+
+function latestLineIndex() {
+    for (var i = maxLines - 1; i >= 0; i--) {
+        if (lineAt(i) != "") {
+            return i;
+        }
+    }
+    return -1;
+}
+
+function visibleText(index) {
+    if (collapsed) {
+        var newest = latestLineIndex();
+        return (index == 0 && newest >= 0) ? lineAt(newest) : "";
+    }
+    return lineAt(index);
 }
 
 function draw() {
@@ -113,9 +132,10 @@ function draw() {
     var viewH = viewHeight();
     var unit = stageUnitsFor(viewW, viewH);
 
+    var linesToDraw = collapsed ? 1 : maxLines;
     var rows = 0;
-    for (var i = 0; i < maxLines; i++) {
-        if (lineAt(i) != "") {
+    for (var i = 0; i < linesToDraw; i++) {
+        if (visibleText(i) != "") {
             rows++;
         }
     }
@@ -136,7 +156,11 @@ function draw() {
 
     if (panel == undefined) {
         panel = _root.createEmptyMovieClip("coopPanel", 5);
-        panel.hitTestDisable = true; // decorative: never steal a world click
+        panel.onPress = function () {
+            collapsed = !collapsed;
+            lastViewW = -1; // force the next frame to redraw
+            draw();
+        };
     }
     panel.clear();
     panel.beginFill(0x0B0B0B, 72);
@@ -158,18 +182,24 @@ function draw() {
     titleField._height = titleH * unit;
     titleField.setTextFormat(titleField.getNewTextFormat());
 
-    for (var row = 0; row < maxLines; row++) {
+    for (var row = 0; row < linesToDraw; row++) {
         if (lineFields[row] == undefined) {
             lineFields[row] = makeField("coopLine" + row, 20 + row, 14 * unit, false);
         }
         var field = lineFields[row];
-        field.text = lineAt(row);
+        var text = visibleText(row);
+        field.text = text;
         field.setTextFormat(field.getNewTextFormat());
         field._x = left + pad * unit;
         field._y = (top + (titleH + pad) * unit) + row * lineH * unit;
         field._width = (panelW - pad * 2) * unit;
         field._height = lineH * unit;
-        field._visible = (lineAt(row) != "");
+        field._visible = (text != "");
+    }
+    for (var extra = linesToDraw; extra < maxLines; extra++) {
+        if (lineFields[extra] != undefined) {
+            lineFields[extra]._visible = false;
+        }
     }
 
     lastViewW = viewW;
