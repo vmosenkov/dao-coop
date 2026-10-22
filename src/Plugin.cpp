@@ -147,6 +147,13 @@ dao::ObjectId g_myAvatar = dao::kInvalidObject;
 // A fight is in progress once a hostile was mirrored; after it ends the fallen
 // party members stand up and the host's player gets their creature back.
 bool g_fightSeen = false;
+// The host mirrors what each hostile is attacking, so the guest's copy can
+// fight the same fight instead of standing still.
+std::map<dao::ObjectId, std::pair<dao::ObjectId, std::uint64_t>> g_hostileTargets;
+std::uint64_t g_mirrorAttackNextFrame = 0;
+// Commands a creature is running: a creature in a fight must not be teleported
+// by the position mirror every frame, or its blow never lands.
+std::map<dao::ObjectId, int> g_busyCreatures;
 // Pause synchronisation: the two games follow each other's tactical pause.
 std::uint64_t g_pauseNextFrame = 0;
 bool g_testPause = false;
@@ -785,6 +792,7 @@ struct NearbyHostile
     dao::Vector position{};
     float health = 0.0F;
     bool dead = false;
+    dao::ObjectId target = dao::kInvalidObject;
 };
 
 int CollectNearbyHostiles(dao::CClientExoApp *app, dao::ObjectId player, NearbyHostile out[coop::kMaxHostiles])
@@ -828,6 +836,12 @@ int CollectNearbyHostiles(dao::CClientExoApp *app, dao::ObjectId player, NearbyH
         out[count].position = position;
         out[count].health = creature->Health().value_or(0.0F);
         out[count].dead = dao::script::api::IsDead(id) != 0;
+        const auto known = g_hostileTargets.find(id);
+        constexpr std::uint64_t kTargetRememberFrames = 600; // about ten seconds
+        if (known != g_hostileTargets.end() && dao::FrameCount() - known->second.second < kTargetRememberFrames)
+        {
+            out[count].target = known->second.first;
+        }
         ++count;
     }
     return count;
@@ -1148,6 +1162,8 @@ void NetFrame()
                     packet.hostiles[i].z = found[i].position.z;
                     packet.hostiles[i].health = found[i].health;
                     packet.hostiles[i].flags = found[i].dead ? coop::kHostileDead : 0;
+                    packet.hostiles[i].target =
+                        found[i].target != dao::kInvalidObject ? found[i].target : 0;
                 }
             }
             g_net.Send(packet);
@@ -1283,7 +1299,13 @@ void NetFrame()
                 const float distance = std::sqrt((dx * dx) + (dy * dy) + (dz * dz));
                 g_puppetId = g_remote.objectId;
                 g_puppetDistance = distance;
-                if (distance > kApplyTolerance)
+                // A creature in a fight must not be teleported back to the
+                // other game's position every frame, or its blow never lands:
+                // let it finish the attack, the position can catch up when the
+                // command ends.
+                const auto busyIt = g_busyCreatures.find(g_remote.objectId);
+                const bool puppetBusy = busyIt != g_busyCreatures.end() && busyIt->second > 0;
+                if (!puppetBusy && distance > kApplyTolerance)
                 {
                     dao::Vector target{};
                     target.x = g_remote.x;
@@ -1370,6 +1392,18 @@ void NetFrame()
                                      dao::script::PropertyValue::Current);
                 ++g_hostileApplied;
                 ++appliedHere;
+            }
+            // The host also mirrors what the creature is attacking, so the
+            // guest's copy fights the same fight instead of standing still.
+            if (entry.target != 0 && dao::FrameCount() > g_mirrorAttackNextFrame)
+            {
+                if (app->GetCreatureById(entry.target) != nullptr &&
+                    dao::script::api::IsObjectHostile(entry.id, entry.target) != 0)
+                {
+                    const bool ordered = dao::orders::Attack(entry.id, entry.target);
+                    g_mirrorAttackNextFrame = dao::FrameCount() + 90;
+                    spdlog::info("mirror: hostile 0x{:08x} attacks 0x{:08x} ({})", entry.id, entry.target, ordered);
+                }
             }
         }
         if (appliedHere > 0)
@@ -1697,6 +1731,17 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
     // for the host. OnStart runs on the game thread while the queue is
     // processed, so keep it short and only record the intent.
     dao::commands::OnStart([](dao::ObjectId object, const dao::Command &command) {
+        ++g_busyCreatures[object];
+        // Host: remember what each creature is attacking, so the hostile table
+        // can tell the guest's copy whom to fight.
+        if (g_role == Role::Host && command.Type() == dao::core::CommandType::Attack)
+        {
+            const std::optional<dao::ObjectId> target = command.Target();
+            if (target.has_value() && *target != dao::kInvalidObject)
+            {
+                g_hostileTargets[object] = {*target, dao::FrameCount()};
+            }
+        }
         if (g_role != Role::Guest || g_pendingAttack.valid)
         {
             return;
@@ -1722,9 +1767,20 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
                      g_pendingAttack.requestId);
     });
 
+    dao::commands::OnEnd([](dao::ObjectId object, const dao::Command &command, std::int32_t result) {
+        (void)command;
+        (void)result;
+        const auto it = g_busyCreatures.find(object);
+        if (it != g_busyCreatures.end() && --it->second <= 0)
+        {
+            g_busyCreatures.erase(it);
+        }
+    });
+
     dao::OnFrame(&Frame);
     return true;
 }
+
 
 
 
