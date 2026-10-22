@@ -63,7 +63,7 @@ with the environment variable DAOLIB_INSTANCE set to a different name
 For the same-PC test the test rig sets DAOCOOP_* environment variables, which
 override the ini; a human on one PC can do the same.
 
-What works today (verified 2026-10-20)
+What works today (verified 2026-10-23)
 --------------------------------------
 - The plugin loads through DAOLib and reads the live game state.
 - Two named instances run side by side, and after loading the same save they
@@ -71,14 +71,26 @@ What works today (verified 2026-10-20)
 - A guest joins over the network by save transfer; no file copying.
 - Two avatars: the host controls one party member, the guest another, and each
   game mirrors the other player's creature.
-- The host's hostile creature's health and death state reach the guest.
+- The host's hostile creature's position, health and death state reach the
+  guest.
+- Combat arbitration: the guest's attack orders are validated and resolved in
+  the host's game, so both players really fight the same enemy.
+- A fallen player does not end the world while another party member is alive;
+  after the fight the fallen party is revived and control returns.
+- When the host loads another save mid-session, the guest reloads it and
+  rejoins by itself (a loading screen, no restart).
+- In-game event log: a panel in the HUD (our own SWF) shows the session's
+  events (multiplayer, combat with creature names, system) with filter tabs;
+  click it to fold or unfold.
 
 What does not work yet
 ----------------------
-- Real combat arbitration: the hostile health channel is proven, but guest
-  attacks do not reach the host yet, and enemy AI, effects, loot and death
-  animations are not synced.
-- Area transitions, quests, inventories, pause, dialogue.
+- Combat animations and effects, loot and bodybags are not synced; the two
+  games can show a swing at different moments.
+- Area transitions: loading another save on the host makes the guest rejoin,
+  but walking through a door in the world does not move the guest yet.
+- Quests, inventories, dialogue and pause are not synced (pause agreement is
+  tested but not a full pause UI).
 - An in-game host/join menu: the ini file is the interface.
 - Internet play (LAN only for now; the Steam relay is not wired up).
 - Only the developer tested builds: no player reports yet.
@@ -88,3 +100,4 @@ instance writes them under its own profile).
 
 Source and issues: https://github.com/vmosenkov/dao-coop (GPL-3.0). It builds
 on DAOLib by Whocares66-Dev, GPL-3.0.
+

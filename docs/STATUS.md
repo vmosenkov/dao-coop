@@ -229,13 +229,20 @@ Draft pending the owner's review.
 | Item | Evidence |
 |---|---|
 | "Runs in place" | The mirrored creature could keep the animation of its last command after a fight. `ClearStalePuppetCommands` (called from the frame callback on both roles) now checks, once per 2.5 s, that no fight is near (host: the alive-hostile count; guest: the mirrored hostile table) and that the copy still has a current command (`dao::commands::HeldFor`), and then drops it with `dao::script::api::ClearAllCommands(copy, 1)` (script command 538, a hard clear). A previous attempt with `RemoveCommandByIndex` did not clear it and logged every 2.5 s; the hard clear does, and the demo fight needs no clearing (its commands end naturally), so this is a safety net for a real play session. `attack-test` still PASSes after the change. Visual check of the behaviour in a live play session is still to do. |
+## Round 14 — release package 0.7.0 verified (2026-10-23)
+
+| Item | Evidence |
+|---|---|
+| Package | `tools\package.ps1 -Version 0.7.0` built `E:\dao-coop-build\dist\dao-coop-0.7.0.zip` (7.0 MB, release preset): DAOLib loader, address files, the plugin with `coop_eventlog.swf` beside it, `README-INSTALL.txt` and `daocoop.ini.example`. |
+| Release tests | `tools\deploy.ps1 -Preset release`, then **`attack-test` PASS** (guest attack request accepted and resolved by the host) and **`reload-test` PASS** (host loaded another save, served it, guest reloaded and rejoined) on the release build. |
+| Install notes | `tools\README-INSTALL.txt` now lists combat arbitration, death/revive, guest rejoin and the in-game event log under "What works today (verified 2026-10-23)", and the missing animation/effect/loot sync, world-door transitions and the ini-only menu under "What does not work yet". |
 ## Next actions
 
-1. Play a real session (the owner) and check the mirrored creature settles after fights; then tune or drop the safety net.
+1. Owner playtest: two PCs on the LAN, then an internet transport (Steam relay is the planned one).
 2. Verify the filter tabs and folding by hand; add scrolling through history and event details.
-3. Send the owner the diff and ask them to review/undraft PR #141 in coop-anything.
+3. Review and undraft PR #141 in coop-anything (the 0.7.0 package can be named there too).
 4. Replicate combat animations/effects between the games; then loot and bodybags.
-5. Area transitions with object-id alignment (OnAreasBuild); a host/join menu.
-6. A second physical PC over the LAN, then the internet transport (Steam relay).
-7. Owner decisions: publish the 0.6.0 release artifact (includes the SWF).
+5. World-door area transitions (needs a way to test a transition; the API exposes DoAreaTransition but no walkable waypoint lookup yet).
+6. An in-game host/join menu to replace the ini file.
+7. Publish the 0.7.0 artifact when the owner says so (the repository rules keep releases to the owner).
 
