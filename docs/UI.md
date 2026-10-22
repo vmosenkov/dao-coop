@@ -103,3 +103,14 @@ your creature" from the attack commands (throttled to one line per creature per
 1.5 s), and "The hostile died". Technical command lines stay in the file log.
 The panel folds to its last line when clicked; clicking it again unfolds it.
 See `docs/images/event-log-combat.png` for a run with the fight in the panel.
+
+## Filters and creature names (2026-10-23)
+
+The panel has four filter tabs — **ALL**, **COMBAT**, **MULTI**, **SYSTEM** —
+drawn as small clips along the top; a click sets the filter and the list shows
+only the events of that category (the movie reads `_root.categories`, a second
+array the plugin fills through `SetArray`). A click on the panel body still
+folds it to its latest line. Combat lines now carry the engine's creature names
+through `dao::script::api::GetName`: "Айдан attacks Огр", "Морриган attacks
+Огр", "Огр died" (UTF-8 in the log, widened for the movie). See
+`docs/images/event-log-filters.png`.

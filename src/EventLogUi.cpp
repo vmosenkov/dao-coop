@@ -4,6 +4,8 @@
 
 #include "Events.h"
 
+#include <Windows.h>
+
 #include "dao/Frame.h"
 #include "dao/Gui.h"
 #include "dao/World.h"
@@ -31,6 +33,24 @@ std::uint32_t g_lastRevision = std::uint32_t(-1);
 int g_lastViewWidth = -1;
 int g_lastViewHeight = -1;
 std::vector<std::wstring> g_wideLines;
+std::vector<std::int32_t> g_categories;
+
+// Event text is UTF-8 (creature names may be localised); AS2 strings are wide.
+std::wstring WideFromUtf8(std::string_view text)
+{
+    if (text.empty())
+    {
+        return {};
+    }
+    const int size = ::MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0);
+    if (size <= 0)
+    {
+        return {};
+    }
+    std::wstring wide(static_cast<std::size_t>(size), L'\0');
+    ::MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), wide.data(), size);
+    return wide;
+}
 
 } // namespace
 
@@ -89,9 +109,11 @@ void Tick()
     const std::deque<coop::GameEvent> &recent = log.Recent();
     const std::size_t start = recent.size() > kShownEvents ? recent.size() - kShownEvents : 0;
     g_wideLines.clear();
+    g_categories.clear();
     for (std::size_t i = start; i < recent.size(); ++i)
     {
-        g_wideLines.emplace_back(recent[i].text.begin(), recent[i].text.end());
+        g_wideLines.push_back(WideFromUtf8(recent[i].text));
+        g_categories.push_back(static_cast<std::int32_t>(recent[i].category));
     }
     std::vector<const wchar_t *> pointers;
     pointers.reserve(g_wideLines.size());
@@ -102,6 +124,7 @@ void Tick()
     if (!pointers.empty())
     {
         movie->SetArray("_root.lines", std::span<const wchar_t *const>(pointers.data(), pointers.size()));
+        movie->SetArray("_root.categories", std::span<const std::int32_t>(g_categories.data(), g_categories.size()));
     }
     movie->SetVariable("_root.count", dao::gui::Value::Number(static_cast<double>(pointers.size())));
     movie->SetVariable("_root.revision", dao::gui::Value::Number(static_cast<double>(revision)));

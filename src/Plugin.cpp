@@ -28,6 +28,8 @@
 #include "SaveTransfer.h"
 #include "Transport.h"
 
+#include <Windows.h>
+
 #include "dao/ClientExoApp.h"
 #include "dao/CommandEvents.h"
 #include "dao/Frame.h"
@@ -161,6 +163,29 @@ void Notify(coop::EventCategory category, const std::string &text)
         dao::script::api::DisplayStatusMessage(wide, 0xFFFFFF);
         nextScreenFrame = dao::FrameCount() + 40;
     }
+}
+
+// The engine's name for a creature ("Aedan", "Dog", ...), as UTF-8 for the log.
+std::string CreatureName(dao::ObjectId id)
+{
+    if (id == dao::kInvalidObject)
+    {
+        return {};
+    }
+    const std::wstring wide = dao::script::api::GetName(id);
+    if (wide.empty())
+    {
+        return {};
+    }
+    const int size = ::WideCharToMultiByte(CP_UTF8, 0, wide.data(), static_cast<int>(wide.size()), nullptr, 0, nullptr,
+                                           nullptr);
+    if (size <= 0)
+    {
+        return {};
+    }
+    std::string text(static_cast<std::size_t>(size), '\0');
+    ::WideCharToMultiByte(CP_UTF8, 0, wide.data(), static_cast<int>(wide.size()), text.data(), size, nullptr, nullptr);
+    return text;
 }
 
 // Session bookkeeping for those events.
@@ -1352,7 +1377,8 @@ void NetFrame()
                 }
                 if (count > 0 && found[0].health <= 0.0F && g_lastHostileHealth > 0.0F && !g_hostileDeathAnnounced)
                 {
-                    Notify(coop::EventCategory::Combat, "The hostile died");
+                    const std::string deadName = CreatureName(found[0].id);
+                    Notify(coop::EventCategory::Combat, deadName.empty() ? "The hostile died" : deadName + " died");
                     g_hostileDeathAnnounced = true;
                 }
                 if (count > 0)
@@ -2090,21 +2116,32 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
                 const bool attackerIsHostile =
                     object == g_hostileId || dao::script::api::IsObjectHostile(ourSide, object) != 0;
                 const dao::ObjectId targetId = attackTarget.value_or(dao::kInvalidObject);
+                const std::string attackerName = CreatureName(object);
+                const std::string targetName = CreatureName(targetId);
                 if (attackerIsHostile)
                 {
                     const bool onOurSide =
                         targetId == ourSide || (g_role == Role::Host && targetId == g_remote.objectId);
-                    Notify(coop::EventCategory::Combat,
-                           onOurSide ? "The enemy attacks your creature" : "The enemy attacks");
+                    const std::string who = attackerName.empty() ? "The enemy" : attackerName;
+                    if (onOurSide)
+                    {
+                        Notify(coop::EventCategory::Combat,
+                               who + " attacks " + (targetName.empty() ? "your creature" : targetName));
+                    }
+                    else
+                    {
+                        Notify(coop::EventCategory::Combat, who + " attacks");
+                    }
                 }
                 else
                 {
-                    std::string who = "Your creature";
-                    if (g_role == Role::Host && object == g_remote.objectId)
+                    std::string who = attackerName;
+                    if (who.empty())
                     {
-                        who = "The other player's creature";
+                        who = (g_role == Role::Host && object == g_remote.objectId) ? "The other player's creature"
+                                                                                    : "Your creature";
                     }
-                    Notify(coop::EventCategory::Combat, who + " attacks the enemy");
+                    Notify(coop::EventCategory::Combat, who + " attacks " + (targetName.empty() ? "the enemy" : targetName));
                 }
             }
         }

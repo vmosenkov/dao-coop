@@ -210,13 +210,21 @@ Draft pending the owner's review.
 | Combat events | `event: [combat] Combat started`, "Your creature attacks the enemy", "The other player's creature attacks the enemy", "The enemy attacks your creature", "Combat ended", "The hostile died" appear in the host/guest logs during `tools\demo-fight.ps1`; the screen shows them (see `docs/images/event-log-combat.png`). Attack lines are throttled per creature (1.5 s). |
 | Folding | A click on the panel folds it to its latest line and another click unfolds it (`panel.onPress` in `DoAction.as`); the text fields have `hitTestDisable`, so the panel takes the click. Not yet exercised by hand. |
 | Still missing | The attack lines name sides, not creatures (no creature names in the protocol yet); no filters, scrolling or event details; combat is only the attack-start/death events the arbitration sees (miss/damage happen inside DAO's own resolution). |
+## Round 11 — log filters and creature names (verified 2026-10-23)
+
+| Item | Evidence |
+|---|---|
+| Filters | The movie received `_root.categories` from `EventLogUi.cpp` (`SetArray` of `int32`), and draws ALL/COMBAT/MULTI/SYSTEM tabs; a click sets the filter. Shown on screen in `docs/images/event-log-filters.png`; the filter click itself was not exercised by hand yet. |
+| Creature names | `dao::script::api::GetName` (command 275) feeds the combat lines: the demo fight logged "Морриган attacks Огр", "Айдан attacks Огр", "Dusty attacks Огр", "Огр died". Log text is UTF-8; `EventLogUi` widens it for AS2 (`MultiByteToWideChar`). |
+| Still missing | Scrolling history and expanded event details; player names for multiplayer lines (the protocol carries only ids); the filtered tab click is unverified by hand. |
 ## Next actions
 
-1. Panel UX: filters All/Combat/Multiplayer/System, scrolling, event details; verify folding by hand.
-2. Creature names in the protocol so the log says 'Vlad attacked Hurlock' rather than 'Your creature'.
+1. Verify the filter tabs and folding by hand in the running game; add scrolling through history and event details.
+2. Player names in the protocol so multiplayer lines say 'Vlad joined' (creature names already work for combat).
 3. Replicate combat animations/effects between the games (the remaining visual gap).
 4. Stop the mirrored creature from playing its old command animation after a fight ('runs in place').
 5. Area transitions with object-id alignment (OnAreasBuild).
 6. A second physical PC over the LAN, then the internet transport (Steam relay).
 7. Owner decisions: publish the 0.6.0 release artifact (includes the SWF).
+8. coop-anything contribution: check the fork/PR state and finish the write-up there.
 
