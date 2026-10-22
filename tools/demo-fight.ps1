@@ -70,6 +70,7 @@ $env:DAOLIB_INSTANCE = 'host'; $env:DAOCOOP_ROLE = 'host'
 $env:DAOCOOP_AUTOLOAD = '1'; $env:DAOCOOP_HANDOFF = '1'; $env:DAOCOOP_JOIN = '0'
 $env:DAOCOOP_ADD_COMPANION = '1'; $env:DAOCOOP_SELECT_PARTY = ''
 $env:DAOCOOP_DEMO_FIGHT = '1'; $env:DAOCOOP_COMBAT_TEST = '0'; $env:DAOCOOP_DRIVE = '0'
+$env:DAOCOOP_DEMO_OGRE_HEALTH = '20000'
 $hostProc = Start-Process -FilePath $exe -WorkingDirectory $bin -PassThru
 Focus-GameWindow $hostProc 25
 if (-not (Wait-ForLogMatch $hostProc (LogPath 'host') 'game loaded:' $HostWaitSeconds)) { throw 'host never reached the world' }
@@ -80,6 +81,7 @@ $env:DAOLIB_INSTANCE = 'guest'; $env:DAOCOOP_ROLE = 'guest'
 $env:DAOCOOP_AUTOLOAD = '0'; $env:DAOCOOP_HANDOFF = '0'; $env:DAOCOOP_JOIN = '1'
 $env:DAOCOOP_ADD_COMPANION = '0'; $env:DAOCOOP_SELECT_PARTY = '1'
 $env:DAOCOOP_DEMO_FIGHT = '1'; $env:DAOCOOP_COMBAT_TEST = '0'; $env:DAOCOOP_DRIVE = '0'
+$env:DAOCOOP_DEMO_OGRE_HEALTH = '20000'
 $guestProc = Start-Process -FilePath $exe -WorkingDirectory $bin -PassThru
 Focus-GameWindow $guestProc 25
 $joined = Wait-ForLogMatch $guestProc (LogPath 'guest') 'game loaded: slot 91' $GuestWaitSeconds
@@ -116,3 +118,4 @@ else {
     Write-Host ''
     Write-Host 'Windows left open: watch the fight. Close with .\tools\launch.ps1 -StopAll'
 }
+

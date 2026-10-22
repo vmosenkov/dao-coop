@@ -611,6 +611,15 @@ void AddCompanion()
     {
         return;
     }
+    // A saved game that already has a party needs no extra dog; the guest
+    // takes the second party member.
+    const dao::script::Array existing = dao::script::api::GetPartyList(dao::kInvalidObject);
+    if (existing.Size() >= 2)
+    {
+        g_companionDone = true;
+        spdlog::info("companion: the save already has {} party member(s); not adding a dog", existing.Size());
+        return;
+    }
     const dao::Vector position = creature->Position();
     dao::CScriptLocation location{};
     location.position.x = position.x + 1.5F;
@@ -724,9 +733,11 @@ void SpawnHostile()
     }
     const dao::Vector position = creature->Position();
     dao::CScriptLocation location{};
-    // The demonstration fight spawns the ogre in sight; the automated combat
-    // test keeps it far away so no fight starts before the handoff save.
-    location.position.x = position.x + (g_demoFight ? 6.0F : 25.0F);
+    // The demonstration fight spawns the ogre at the player's feet: any offset
+    // in the level test save landed outside navigation (COMMAND_FAILED_INVALID_PATH)
+    // and the ogre fell. The automated combat test keeps it far away so no fight
+    // starts before the handoff save.
+    location.position.x = position.x + (g_demoFight ? 0.5F : 25.0F);
     location.position.y = position.y;
     location.position.z = position.z;
     location.area = creature->AreaId();
@@ -886,13 +897,17 @@ void BuffPartyForDemo()
         }
         if (const dao::CCCreature *creature = app->GetCreatureById(id))
         {
-            creature->SetProperty(dao::script::constants::PROPERTY_DEPLETABLE_HEALTH, g_demoPartyHealth,
+            // A high-level saved party may already have more health than the
+            // demo floor; never lower it.
+            const float existingMax = creature->MaxHealth().value_or(0.0F);
+            const float target = existingMax > g_demoPartyHealth ? existingMax : g_demoPartyHealth;
+            creature->SetProperty(dao::script::constants::PROPERTY_DEPLETABLE_HEALTH, target,
                                   dao::script::PropertyValue::Base);
-            creature->SetProperty(dao::script::constants::PROPERTY_DEPLETABLE_HEALTH, g_demoPartyHealth,
+            creature->SetProperty(dao::script::constants::PROPERTY_DEPLETABLE_HEALTH, target,
                                   dao::script::PropertyValue::Current);
         }
     }
-    spdlog::info("demo: party health set to {:.0f} for the demonstration", g_demoPartyHealth);
+    spdlog::info("demo: party health set to at least {:.0f} for the demonstration", g_demoPartyHealth);
 }
 
 void DemoFightTick()
