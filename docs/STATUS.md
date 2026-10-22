@@ -185,12 +185,20 @@ Draft pending the owner's review.
 | Events | "Another player joined the game", "Joined the host's game", "Connection to the other player lost" / "Reconnected", "The hostile died" (combat), "Host loaded another save; saving and serving the new world" (world), "Rejoined the host's new world". Seen in `daocoop.log` of both instances. |
 | Guest rejoin | The host publishes `kWorldReloaded` in the state flags when it loads another save, then re-saves slot 91 and serves it again. The guest resets its join state (files, selection, avatar, mirrored state) on that flag and goes through receive → write → load again; the game shows its loading screen and the guest re-selects the second party member. `tools\reload-test.ps1` **PASS**: host loaded manual slot 2, served the world a second time; guest saw the reload, received the new save, loaded it, logged "Rejoined the host's new world". |
 | Level test save | The owner's new save is used for tests: `Hero1/QuickSave_1` (health 200, Fort Drakon second floor, 4 party members). No extra dog is created when the save already has a party; the demo keeps high-level health; the demo ogre spawns at the player's feet (offsets landed outside navigation in that level) and its health is raised for the demo (values above 9999 are clamped by the game). |
+## Round 8 — death/revive verified; event panel investigated (2026-10-23)
+
+| Item | Evidence |
+|---|---|
+| Death + revive | `tools\death-test.ps1` **PASS**: the test kills the host player on purpose three seconds after the fight starts (`DAOCOOP_TEST_KILL_PLAYER=1`), the host's world keeps running while the guest is alive (state lines after the fall), the hostile is then defeated through the test hook, the revive path sets fallen party members back to their maximum health (the documented zero-to-positive health transition) and the host's control returns to its avatar; the avatar is above zero health afterwards. Note: the ogre did not finish the host by itself in the level save, so the *combat* death is staged with a test hook; the revive path itself is what the test verifies. |
+| Revive fix | A corpse left in the hostile table no longer counts as an ongoing fight: `RevivePartyAfterFight` now looks only at entries that are alive (`!dead` and health > 0), on the host and through the mirrored table on the guest. Before this the dead ogre kept the fight "running" and revive never fired. |
+| In-game log window | Investigated with Codex: `PrintToLogWindow` (82) pops its arguments and does nothing, and `PrintToLog` (5) writes only to the engine's Script file-log channel (off by default); the game has no message-log movie. A persistent panel therefore needs the plugin's own SWF loaded into a HUD movie (`dao::gui::ScreenMovie`, `LoadInto`, `Movie::SetVariable`/`SetArray` in `Gui.h`), which needs a `.swf` asset that does not exist yet. The current on-screen output stays `DisplayStatusMessage` (throttled). |
+| Test hooks | `DAOCOOP_TEST_RELOAD` (load another save, guest rejoins), `DAOCOOP_TEST_VICTORY` (defeat the hostile after the fall), `DAOCOOP_TEST_KILL_PLAYER` (kill the host player on purpose). |
 ## Next actions
 
-1. A real in-game event panel in DAO's style (collapsible, bottom-right, filters All/Combat/Multiplayer/System, expandable entries) on top of the event log; DAOLib exposes Flash/GFx APIs (`Gui.h`: custom screens, movie variables, clip patching) but has no ready-made panel.
-2. Replicate combat events (attack/death animations, damage numbers) — position, health, target and attack start are already mirrored.
-3. Verify the status messages are visible in combat and explore modes.
-4. Host pause/death handshake for the guest (death and revive skeleton exists; revive not yet observed in play).
+1. A real in-game event panel in DAO's style: build a small SWF with several text rows, load it into a HUD movie with `dao::gui::LoadInto` and fill it from `EventLog::Recent()`; filters and expandable entries after that.
+2. Replicate combat events (attack/death animations, damage numbers) — position, health, target and attack start are already mirrored; the missing piece is the animation/effect event itself.
+3. Stop the mirrored creature from playing its old command animation after the fight ("runs in place"): look for a verified way to clear the puppet's command queue.
+4. Host pause/death handshake polish; verify the status messages are visible in combat and explore modes.
 5. Area transitions with object-id alignment (`OnAreasBuild`).
 6. A second physical PC over the LAN, then the internet transport (Steam relay).
 7. Owner decisions: publish the 0.6.0 release artifact.

@@ -176,6 +176,16 @@ bool g_hostileDeathAnnounced = false;
 bool g_testReload = false;
 bool g_testReloaded = false;
 std::uint64_t g_testReloadAt = 0;
+// Test hook: with the host's avatar down, defeat the hostile so the
+// revive-after-the-fight path can be exercised without a real winner.
+bool g_testVictory = false;
+bool g_testVictoryDone = false;
+std::uint64_t g_testVictoryAt = 0;
+// Test hook: kill the host player on purpose when the fight starts, so the
+// revive path can be checked without waiting for the ogre to win.
+bool g_testKillPlayer = false;
+bool g_testKillPlayerDone = false;
+std::uint64_t g_testKillPlayerAt = 0;
 // Party-member selection phases (guest), reset when the world is replaced.
 int g_selectPhase = 0;
 std::uint64_t g_selectPhaseFrame = 0;
@@ -1099,11 +1109,26 @@ void RevivePartyAfterFight()
     if (g_role == Role::Host)
     {
         NearbyHostile found[coop::kMaxHostiles];
-        hostilesNear = CollectNearbyHostiles(app, avatar, found) > 0;
+        const int count = CollectNearbyHostiles(app, avatar, found);
+        for (int i = 0; i < count; ++i)
+        {
+            // A corpse left in the table is not a fight.
+            if (!found[i].dead && found[i].health > 0.0F)
+            {
+                hostilesNear = true;
+            }
+        }
     }
     else
     {
-        hostilesNear = g_remote.hostileCount > 0;
+        for (std::uint32_t i = 0; i < g_remote.hostileCount && i < coop::kMaxHostiles; ++i)
+        {
+            const coop::HostileEntry &entry = g_remote.hostiles[i];
+            if ((entry.flags & coop::kHostileDead) == 0 && entry.health > 0.0F)
+            {
+                hostilesNear = true;
+            }
+        }
     }
     if (hostilesNear)
     {
@@ -1703,6 +1728,58 @@ void Frame()
             DemoFightTick();
             RevivePartyAfterFight();
             DamageHostileTick();
+            // Test hook: kill the host player on purpose a few seconds into the
+            // fight, so the revive path can be checked without waiting for the
+            // hostile to win.
+            if (g_role == Role::Host && g_testKillPlayer && g_testVictory && !g_testKillPlayerDone &&
+                g_demoStarted)
+            {
+                if (g_testKillPlayerAt == 0)
+                {
+                    g_testKillPlayerAt = frame + 300;
+                }
+                if (frame >= g_testKillPlayerAt)
+                {
+                    g_testKillPlayerDone = true;
+                    dao::CClientExoApp *exo = dao::CClientExoApp::Get();
+                    const dao::ObjectId fightAvatar =
+                        g_myAvatar != dao::kInvalidObject ? g_myAvatar : dao::party::Controlled();
+                    if (exo != nullptr)
+                    {
+                        if (const dao::CCCreature *avatarCreature = exo->GetCreatureById(fightAvatar))
+                        {
+                            avatarCreature->SetProperty(dao::script::constants::PROPERTY_DEPLETABLE_HEALTH, 0.0F,
+                                                        dao::script::PropertyValue::Current);
+                        }
+                    }
+                    spdlog::info("test: the host player is killed on purpose");
+                }
+            }
+            // Test hook: with the host player down, defeat the hostile so the
+            // revive-after-the-fight path can be exercised.
+            if (g_role == Role::Host && g_testVictory && !g_testVictoryDone)
+            {
+                dao::CClientExoApp *exo = dao::CClientExoApp::Get();
+                const dao::ObjectId fightAvatar =
+                    g_myAvatar != dao::kInvalidObject ? g_myAvatar : dao::party::Controlled();
+                const dao::CCCreature *avatarCreature = exo != nullptr ? exo->GetCreatureById(fightAvatar) : nullptr;
+                const float avatarHealth = avatarCreature != nullptr ? avatarCreature->Health().value_or(1.0F) : 1.0F;
+                if (avatarHealth <= 0.0F && g_testVictoryAt == 0)
+                {
+                    g_testVictoryAt = frame + 180;
+                    spdlog::info("test: the host player is down; the hostile will be defeated in three seconds");
+                }
+                if (g_testVictoryAt != 0 && frame >= g_testVictoryAt && exo != nullptr)
+                {
+                    g_testVictoryDone = true;
+                    if (const dao::CCCreature *ogre = exo->GetCreatureById(g_hostileId))
+                    {
+                        ogre->SetProperty(dao::script::constants::PROPERTY_DEPLETABLE_HEALTH, 0.0F,
+                                          dao::script::PropertyValue::Current);
+                        spdlog::info("test: the hostile is defeated for the revive test");
+                    }
+                }
+            }
             // Test hook: load another save on the host once the guest is in, so
             // the automatic guest rejoin can be exercised.
             if (g_role == Role::Host && g_testReload && !g_testReloaded && g_firstLoadSeen && g_haveRemote)
@@ -1871,6 +1948,8 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
     }
     g_testPause = Flag("test_pause", "DAOCOOP_TEST_PAUSE");
     g_testReload = Flag("test_reload", "DAOCOOP_TEST_RELOAD");
+    g_testVictory = Flag("test_victory", "DAOCOOP_TEST_VICTORY");
+    g_testKillPlayer = Flag("test_kill_player", "DAOCOOP_TEST_KILL_PLAYER");
     dao::party::OnControlChanged([](dao::ObjectId before, dao::ObjectId now) {
         spdlog::info("control: 0x{:08x} -> 0x{:08x}", before, now);
         // The host's own creature is fixed when the world starts. When the
@@ -2025,6 +2104,7 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
     dao::OnFrame(&Frame);
     return true;
 }
+
 
 
 
