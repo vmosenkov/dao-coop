@@ -27,7 +27,7 @@ namespace coop
 // 'DCOC' in little-endian, so a wrong port or an unrelated datagram is cheap
 // to reject.
 inline constexpr std::uint32_t kMagic = 0x434F4344;
-inline constexpr std::uint16_t kVersion = 6;
+inline constexpr std::uint16_t kVersion = 7;
 
 // How many nearby hostiles the host mirrors.
 inline constexpr std::uint32_t kMaxHostiles = 4;
@@ -59,6 +59,8 @@ inline constexpr std::uint32_t kHostileDead = 1U << 0;
 
 // StatePacket::flags: the sender's tactical pause is on.
 inline constexpr std::uint8_t kPaused = 1U << 0;
+// The host has just loaded another save; the guest's world is out of date.
+inline constexpr std::uint8_t kWorldReloaded = 1U << 1;
 
 // One player's creature, as its own game sees it, plus the hostiles the host
 // mirrors. The id is the engine's object id; both games name the same creature
@@ -185,6 +187,7 @@ class Transport
 };
 
 } // namespace coop
+
 
 
 

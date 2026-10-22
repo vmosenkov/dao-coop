@@ -23,6 +23,7 @@
 //   DAOCOOP_DRIVE=1        host only: walk between waypoints for testing
 //   DAOCOOP_HOST_PORT      default 45830
 //   DAOCOOP_GUEST_PORT     default 45831
+#include "Events.h"
 #include "SaveTransfer.h"
 #include "Transport.h"
 
@@ -143,6 +144,33 @@ float g_demoOgreHealth = 1500.0F;
 // When to tell the host player's creature to attack again (it gets no input in
 // the demonstration, so a single order is not enough).
 std::uint64_t g_demoNextAttackOrder = 0;
+
+// Session event log: multiplayer/world/system events go to the file log and on
+// screen; combat events stay in the log for now (a real panel can read them).
+void Notify(coop::EventCategory category, const std::string &text)
+{
+    coop::EventLog::Get().Add(category, text);
+    spdlog::info("event: [{}] {}", coop::EventCategoryName(category), text);
+    // DEBUG_PrintToScreen is a no-op in the shipped game; DisplayStatusMessage
+    // is the verified path (FloatyLayer). Throttled so a burst cannot flood it.
+    static std::uint64_t nextScreenFrame = 0;
+    if (category != coop::EventCategory::Combat && dao::FrameCount() >= nextScreenFrame)
+    {
+        const std::wstring wide(text.begin(), text.end());
+        dao::script::api::DisplayStatusMessage(wide, 0xFFFFFF);
+        nextScreenFrame = dao::FrameCount() + 40;
+    }
+}
+
+// Session bookkeeping for those events.
+bool g_sawRemote = false;
+bool g_connectionLost = false;
+std::uint64_t g_lastRemoteFrame = 0;
+std::uint64_t g_worldReloadFrames = 0;
+bool g_worldReloadNoticed = false;
+bool g_firstLoadSeen = false;
+float g_lastHostileHealth = -1.0F;
+bool g_hostileDeathAnnounced = false;
 // The player's own creature, fixed when the world starts: if the game moves
 // control to another party member (the avatar fell), the network keeps naming
 // the avatar, not whoever the game selected.
@@ -1226,6 +1254,22 @@ void NetFrame()
                         found[i].target != dao::kInvalidObject ? found[i].target : 0;
                     packet.hostiles[i].attackSeq = found[i].attackSeq;
                 }
+                // Combat event for the log: the first mirrored hostile died.
+                if (count > 0 && found[0].health <= 0.0F && g_lastHostileHealth > 0.0F && !g_hostileDeathAnnounced)
+                {
+                    Notify(coop::EventCategory::Combat, "The hostile died");
+                    g_hostileDeathAnnounced = true;
+                }
+                if (count > 0)
+                {
+                    g_lastHostileHealth = found[0].health;
+                }
+                // Tell the guest its world is out of date after a save load.
+                if (g_worldReloadFrames > 0)
+                {
+                    packet.flags |= coop::kWorldReloaded;
+                    --g_worldReloadFrames;
+                }
             }
             g_net.Send(packet);
         }
@@ -1233,12 +1277,46 @@ void NetFrame()
 
     // Receive everything waiting; keep the newest.
     coop::StatePacket incoming{};
+    bool gotPacket = false;
     for (int i = 0; i < 32 && g_net.Receive(incoming); ++i)
     {
+        gotPacket = true;
         if (!g_haveRemote || incoming.sequence > g_remote.sequence)
         {
             g_remote = incoming;
             g_haveRemote = true;
+        }
+    }
+    if (gotPacket)
+    {
+        g_lastRemoteFrame = dao::FrameCount();
+        if (g_connectionLost)
+        {
+            Notify(coop::EventCategory::Multiplayer, "Reconnected to the other player");
+            g_connectionLost = false;
+        }
+        if (!g_sawRemote)
+        {
+            Notify(coop::EventCategory::Multiplayer, "Another player joined the game");
+            g_sawRemote = true;
+        }
+    }
+    else if (g_sawRemote && !g_connectionLost && dao::FrameCount() - g_lastRemoteFrame > 300)
+    {
+        Notify(coop::EventCategory::Multiplayer, "Connection to the other player lost");
+        g_connectionLost = true;
+    }
+    if (g_haveRemote)
+    {
+        const bool reload = (g_remote.flags & coop::kWorldReloaded) != 0;
+        if (reload && !g_worldReloadNoticed)
+        {
+            Notify(coop::EventCategory::World, "Host loaded another save; this world is out of date");
+            g_worldReloadNoticed = true;
+        }
+        else if (!reload)
+        {
+            g_worldReloadNoticed = false;
         }
     }
 
@@ -1791,6 +1869,20 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
         if (loaded)
         {
             spdlog::info("game loaded: slot {} kind {}", loaded->number, dao::saves::Name(loaded->kind));
+            if (!g_firstLoadSeen)
+            {
+                g_firstLoadSeen = true;
+                if (g_role == Role::Guest)
+                {
+                    Notify(coop::EventCategory::Multiplayer, "Joined the host's game");
+                }
+            }
+            else if (g_role == Role::Host)
+            {
+                // A load during a session replaces the world the guest is in.
+                Notify(coop::EventCategory::World, "Host loaded another save; the guest's world is out of date");
+                g_worldReloadFrames = 120;
+            }
         }
         else
         {
