@@ -171,6 +171,14 @@ bool g_worldReloadNoticed = false;
 bool g_firstLoadSeen = false;
 float g_lastHostileHealth = -1.0F;
 bool g_hostileDeathAnnounced = false;
+// Test hook: after the guest has joined, load another save on the host to
+// exercise the guest's automatic rejoin.
+bool g_testReload = false;
+bool g_testReloaded = false;
+std::uint64_t g_testReloadAt = 0;
+// Party-member selection phases (guest), reset when the world is replaced.
+int g_selectPhase = 0;
+std::uint64_t g_selectPhaseFrame = 0;
 // The player's own creature, fixed when the world starts: if the game moves
 // control to another party member (the avatar fell), the network keeps naming
 // the avatar, not whoever the game selected.
@@ -480,6 +488,47 @@ void TryAutoLoad()
     g_loadRequested = false;
 }
 
+// The host loaded another save during a session: save the new world again and
+// serve it, so the guest can reconnect to it.
+void ResetHandoffForResync()
+{
+    g_handoffSent = false;
+    g_handoffWritten = false;
+    g_handoffRequested = false;
+    g_handoffWorldFrame = 0;
+    g_myAvatar = dao::kInvalidObject;
+    g_hostileId = dao::kInvalidObject;
+    g_hostileSpawned = false;
+    g_hostileTicks = 0;
+    g_demoStarted = false;
+    g_demoOrdered = false;
+    g_fightSeen = false;
+    spdlog::info("handoff: the host loaded another save; saving and serving the new world for the guest");
+}
+
+// The guest saw that flag: forget the old world and go through the join again.
+void ResetGuestJoinForResync()
+{
+    g_filesReady = false;
+    g_joinFilesWritten = false;
+    g_joinLoadRequested = false;
+    g_nextLoadTryFrame = 0;
+    g_nextJoinTryFrame = 0;
+    g_myAvatar = dao::kInvalidObject;
+    g_selected = false;
+    g_selectPhase = 0;
+    g_selectPhaseFrame = 0;
+    g_pendingAttack.valid = false;
+    g_seenAttackSeq.clear();
+    g_hostileTargets.clear();
+    g_fightSeen = false;
+    {
+        const std::lock_guard<std::mutex> lock(g_receivedMutex);
+        g_receivedFiles.clear();
+    }
+    spdlog::info("join: the host loaded another save; reconnecting to the new world");
+}
+
 // Host side of the join: send the slot folder that was just written. The
 // waiting and the bytes live on a worker thread; the game keeps playing.
 void StartHandoffSend(const std::filesystem::path &folder)
@@ -676,9 +725,6 @@ void AddCompanion()
 // control follows the selection's first entry. So first try a plain click
 // (second field 0, replacing the selection); if that leaves control where it
 // was, fall back to toggling the old first member off and adding the new one.
-int g_selectPhase = 0;
-std::uint64_t g_selectPhaseFrame = 0;
-
 void SendPartyIndex(const char *why, int index, int add)
 {
     const std::wstring text =
@@ -1311,8 +1357,9 @@ void NetFrame()
         const bool reload = (g_remote.flags & coop::kWorldReloaded) != 0;
         if (reload && !g_worldReloadNoticed)
         {
-            Notify(coop::EventCategory::World, "Host loaded another save; this world is out of date");
+            Notify(coop::EventCategory::World, "Host loaded another save; reconnecting to the new world");
             g_worldReloadNoticed = true;
+            ResetGuestJoinForResync();
         }
         else if (!reload)
         {
@@ -1656,6 +1703,22 @@ void Frame()
             DemoFightTick();
             RevivePartyAfterFight();
             DamageHostileTick();
+            // Test hook: load another save on the host once the guest is in, so
+            // the automatic guest rejoin can be exercised.
+            if (g_role == Role::Host && g_testReload && !g_testReloaded && g_firstLoadSeen && g_haveRemote)
+            {
+                if (g_testReloadAt == 0)
+                {
+                    g_testReloadAt = frame + 120;
+                }
+                if (frame >= g_testReloadAt)
+                {
+                    g_testReloaded = true;
+                    const std::wstring character = FirstCharacter();
+                    spdlog::info("test: loading another save (slot 2) to exercise the guest rejoin");
+                    dao::saves::Load(dao::saves::Slot{character, 2, dao::saves::Kind::Manual});
+                }
+            }
         }
     }
     else
@@ -1807,6 +1870,7 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
         }
     }
     g_testPause = Flag("test_pause", "DAOCOOP_TEST_PAUSE");
+    g_testReload = Flag("test_reload", "DAOCOOP_TEST_RELOAD");
     dao::party::OnControlChanged([](dao::ObjectId before, dao::ObjectId now) {
         spdlog::info("control: 0x{:08x} -> 0x{:08x}", before, now);
         // The host's own creature is fixed when the world starts. When the
@@ -1880,8 +1944,17 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
             else if (g_role == Role::Host)
             {
                 // A load during a session replaces the world the guest is in.
-                Notify(coop::EventCategory::World, "Host loaded another save; the guest's world is out of date");
+                Notify(coop::EventCategory::World, "Host loaded another save; saving and serving the new world");
                 g_worldReloadFrames = 120;
+                ResetHandoffForResync();
+            }
+            else
+            {
+                // The guest's automatic rejoin: it loaded a new host save.
+                g_myAvatar = dao::kInvalidObject;
+                g_selected = false;
+                g_selectPhase = 0;
+                Notify(coop::EventCategory::Multiplayer, "Rejoined the host's new world");
             }
         }
         else
@@ -1952,6 +2025,7 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
     dao::OnFrame(&Frame);
     return true;
 }
+
 
 
 

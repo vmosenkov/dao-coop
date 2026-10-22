@@ -176,12 +176,21 @@ Draft pending the owner's review.
 | Death test | `tools\death-test.ps1`: host party not raised, guest raised, ogre 300 HP. Host player fell; **the host world kept running** (415-434 state lines after the fall) and the guest kept sending attack requests (7-135, all accepted). The ogre did not die in those runs because the mirrored pet was clamped to 1 HP; that is fixed by v4 but the death+revive chain needs a fresh run. |
 | Revive (unverified) | After the fight, fallen party members are set to their maximum health (the documented zero-to-positive health transition rebuilds placement and clears the dead timer, `dev/COMBAT.md:403`) and the host's control is moved back to its avatar. Not yet observed in play. |
 | Still local | Animations, damage numbers, effects and the enemies' own actions are computed by each game separately; only position and health are replicated. The guest's ogre stands still while the host's fights. This is the next large step (combat event replication). |
+## Round 7 — session event log and guest rejoin (verified 2026-10-23)
+
+| Item | Evidence |
+|---|---|
+| Event log foundation | `src/Events.h`: categories multiplayer / world / combat / system, a 200-event ring the future UI can read. `Notify()` writes `event: [category] …` to the file log and shows short events on screen. |
+| On-screen output | `DEBUG_PrintToScreen` is a no-op in the shipped game and `PrintString` consumes its arguments (Codex checked the disassembly notes); the verified path is `DisplayStatusMessage` (script command 747, FloatyLayer handler), now used with a 40-frame throttle. Visibility in combat is inferred, not yet confirmed by eye. |
+| Events | "Another player joined the game", "Joined the host's game", "Connection to the other player lost" / "Reconnected", "The hostile died" (combat), "Host loaded another save; saving and serving the new world" (world), "Rejoined the host's new world". Seen in `daocoop.log` of both instances. |
+| Guest rejoin | The host publishes `kWorldReloaded` in the state flags when it loads another save, then re-saves slot 91 and serves it again. The guest resets its join state (files, selection, avatar, mirrored state) on that flag and goes through receive → write → load again; the game shows its loading screen and the guest re-selects the second party member. `tools\reload-test.ps1` **PASS**: host loaded manual slot 2, served the world a second time; guest saw the reload, received the new save, loaded it, logged "Rejoined the host's new world". |
+| Level test save | The owner's new save is used for tests: `Hero1/QuickSave_1` (health 200, Fort Drakon second floor, 4 party members). No extra dog is created when the save already has a party; the demo keeps high-level health; the demo ogre spawns at the player's feet (offsets landed outside navigation in that level) and its health is raised for the demo (values above 9999 are clamped by the game). |
 ## Next actions
 
-1. Verify the death/revive chain after the v4 maximum-health fix (death-test).
-2. Replicate combat events (attack animation, target, effects) so both games show the same fight.
-3. Verify pause sync with a test that first puts both games in the same pause state.
-4. Area transitions with object-id alignment (OnAreasBuild).
-5. A second physical PC over the LAN, then the internet transport (Steam relay).
-6. A minimal player-facing host/join flow; owner decisions: publish the 0.6.0 release artifact.
-
+1. A real in-game event panel in DAO's style (collapsible, bottom-right, filters All/Combat/Multiplayer/System, expandable entries) on top of the event log; DAOLib exposes Flash/GFx APIs (`Gui.h`: custom screens, movie variables, clip patching) but has no ready-made panel.
+2. Replicate combat events (attack/death animations, damage numbers) — position, health, target and attack start are already mirrored.
+3. Verify the status messages are visible in combat and explore modes.
+4. Host pause/death handshake for the guest (death and revive skeleton exists; revive not yet observed in play).
+5. Area transitions with object-id alignment (`OnAreasBuild`).
+6. A second physical PC over the LAN, then the internet transport (Steam relay).
+7. Owner decisions: publish the 0.6.0 release artifact.
