@@ -136,6 +136,21 @@ float g_hostileDistance = 0.0F;
 bool g_demoFight = false;
 bool g_demoStarted = false;
 bool g_demoOrdered = false;
+// How much health the demonstration party gets; 0 or less leaves it as the
+// game made it, so a death test can let the host fall while the guest lives.
+float g_demoPartyHealth = 5000.0F;
+float g_demoOgreHealth = 1500.0F;
+// The player's own creature, fixed when the world starts: if the game moves
+// control to another party member (the avatar fell), the network keeps naming
+// the avatar, not whoever the game selected.
+dao::ObjectId g_myAvatar = dao::kInvalidObject;
+// A fight is in progress once a hostile was mirrored; after it ends the fallen
+// party members stand up and the host's player gets their creature back.
+bool g_fightSeen = false;
+// Pause synchronisation: the two games follow each other's tactical pause.
+std::uint64_t g_pauseNextFrame = 0;
+bool g_testPause = false;
+bool g_testPauseDone = false;
 bool g_handoffWritten = false; // the handoff save is on disk
 
 // Combat arbitration: the guest turns its own attack order into a request and
@@ -352,24 +367,26 @@ bool LocalState(coop::StatePacket &packet)
     {
         return false;
     }
-    const dao::ObjectId controlled = dao::party::Controlled();
-    if (controlled == dao::kInvalidObject)
+    const dao::ObjectId avatar = g_myAvatar != dao::kInvalidObject ? g_myAvatar : dao::party::Controlled();
+    if (avatar == dao::kInvalidObject)
     {
         return false;
     }
-    const dao::CCCreature *creature = app->GetCreatureById(controlled);
+    const dao::CCCreature *creature = app->GetCreatureById(avatar);
     if (creature == nullptr)
     {
         return false;
     }
     const dao::Vector position = creature->Position();
     packet.sequence = ++g_sequence;
-    packet.objectId = controlled;
+    packet.objectId = avatar;
     packet.areaId = creature->AreaId();
     packet.x = position.x;
     packet.y = position.y;
     packet.z = position.z;
     packet.health = creature->Health().value_or(-1.0F);
+    packet.maxHealth = creature->MaxHealth().value_or(-1.0F);
+    packet.flags = app->IsPaused() ? coop::kPaused : 0;
     return true;
 }
 
@@ -645,6 +662,8 @@ void SelectPartyMember()
         if (now == wanted)
         {
             g_selected = true;
+            g_myAvatar = wanted;
+            spdlog::info("avatar: this player's creature is 0x{:08x}", wanted);
             return;
         }
         SendPartyIndex("toggling off", 0, 1);
@@ -659,6 +678,8 @@ void SelectPartyMember()
         const dao::ObjectId now = dao::party::Controlled();
         spdlog::info("select: after the toggle, controlled 0x{:08x} (wanted 0x{:08x})", now, wanted);
         g_selected = true;
+        g_myAvatar = wanted;
+        spdlog::info("avatar: this player's creature is 0x{:08x}", wanted);
     }
 }
 
@@ -817,6 +838,11 @@ int CollectNearbyHostiles(dao::CClientExoApp *app, dao::ObjectId player, NearbyH
 // couple of minutes otherwise). DAO still resolves every blow.
 void BuffPartyForDemo()
 {
+    if (g_demoPartyHealth <= 0.0F)
+    {
+        spdlog::info("demo: party health left as the game made it");
+        return;
+    }
     dao::CClientExoApp *app = dao::CClientExoApp::Get();
     if (app == nullptr)
     {
@@ -832,13 +858,13 @@ void BuffPartyForDemo()
         }
         if (const dao::CCCreature *creature = app->GetCreatureById(id))
         {
-            creature->SetProperty(dao::script::constants::PROPERTY_DEPLETABLE_HEALTH, 5000.0F,
+            creature->SetProperty(dao::script::constants::PROPERTY_DEPLETABLE_HEALTH, g_demoPartyHealth,
                                   dao::script::PropertyValue::Base);
-            creature->SetProperty(dao::script::constants::PROPERTY_DEPLETABLE_HEALTH, 5000.0F,
+            creature->SetProperty(dao::script::constants::PROPERTY_DEPLETABLE_HEALTH, g_demoPartyHealth,
                                   dao::script::PropertyValue::Current);
         }
     }
-    spdlog::info("demo: party health raised for the demonstration");
+    spdlog::info("demo: party health set to {:.0f} for the demonstration", g_demoPartyHealth);
 }
 
 void DemoFightTick()
@@ -852,24 +878,26 @@ void DemoFightTick()
     {
         return;
     }
-    if (g_role == Role::Host && g_handoff && g_handoffWritten && !g_demoStarted && g_hostileId != dao::kInvalidObject)
+    if (g_role == Role::Host && g_handoff && g_handoffWritten && g_haveRemote && !g_demoStarted &&
+        g_hostileId != dao::kInvalidObject)
     {
-        // The save is on disk, so a fight may start now: wake the ogre, turn
-        // its AI back on and order the host's creature to attack it.
+        // The save is on disk and the guest is in the world, so a fight may
+        // start now: wake the ogre, turn its AI back on and order the host's
+        // creature to attack it.
         g_demoStarted = true;
+        g_fightSeen = true;
         BuffPartyForDemo();
         dao::script::api::SetObjectActive(g_hostileId, 1);
         dao::script::api::SetLocalInt(g_hostileId, L"CREATURE_RULES_FLAG0", 0);
-        // A demonstration opponent that lives long enough to be watched while
-        // the party, raised to 5000 HP, keeps hitting it.
         if (const dao::CCCreature *ogre = app->GetCreatureById(g_hostileId))
         {
-            ogre->SetProperty(dao::script::constants::PROPERTY_DEPLETABLE_HEALTH, 1500.0F,
+            ogre->SetProperty(dao::script::constants::PROPERTY_DEPLETABLE_HEALTH, g_demoOgreHealth,
                               dao::script::PropertyValue::Base);
-            ogre->SetProperty(dao::script::constants::PROPERTY_DEPLETABLE_HEALTH, 1500.0F,
+            ogre->SetProperty(dao::script::constants::PROPERTY_DEPLETABLE_HEALTH, g_demoOgreHealth,
                               dao::script::PropertyValue::Current);
         }
-        const bool ordered = dao::orders::Attack(dao::party::Controlled(), g_hostileId);
+        const dao::ObjectId fighter = g_myAvatar != dao::kInvalidObject ? g_myAvatar : dao::party::Controlled();
+        const bool ordered = dao::orders::Attack(fighter, g_hostileId);
         spdlog::info("demo: fight started at 0x{:08x} (active, AI on, attack order {})", g_hostileId, ordered);
         return;
     }
@@ -891,13 +919,100 @@ void DemoFightTick()
         {
             // The guest's copy of the ogre was saved inactive with its AI off;
             // wake it so the demonstration fight is visible on both screens.
+            g_fightSeen = true;
             BuffPartyForDemo();
             dao::script::api::SetObjectActive(chosen->id, 1);
             dao::script::api::SetLocalInt(chosen->id, L"CREATURE_RULES_FLAG0", 0);
-            const bool ordered = dao::orders::Attack(dao::party::Controlled(), chosen->id);
+            const dao::ObjectId fighter = g_myAvatar != dao::kInvalidObject ? g_myAvatar : dao::party::Controlled();
+            const bool ordered = dao::orders::Attack(fighter, chosen->id);
             g_demoOrdered = ordered;
             spdlog::info("demo: guest woke 0x{:08x} and ordered its creature to attack it ({})", chosen->id, ordered);
         }
+    }
+}
+
+// After the fight: fallen party members stand up (a health change from zero to
+// positive is the documented native path that rebuilds placement and clears the
+// dead timer, dev/COMBAT.md:403) and the host's player gets the avatar back if
+// the game had moved control to a companion. First runtime test of this in co-op.
+void RevivePartyAfterFight()
+{
+    if (!InWorld() || !g_haveRemote)
+    {
+        return;
+    }
+    dao::CClientExoApp *app = dao::CClientExoApp::Get();
+    if (app == nullptr)
+    {
+        return;
+    }
+    const dao::ObjectId avatar = g_myAvatar != dao::kInvalidObject ? g_myAvatar : dao::party::Controlled();
+    bool hostilesNear = false;
+    if (g_role == Role::Host)
+    {
+        NearbyHostile found[coop::kMaxHostiles];
+        hostilesNear = CollectNearbyHostiles(app, avatar, found) > 0;
+    }
+    else
+    {
+        hostilesNear = g_remote.hostileCount > 0;
+    }
+    if (hostilesNear)
+    {
+        g_fightSeen = true;
+        return;
+    }
+    if (!g_fightSeen)
+    {
+        return;
+    }
+    g_fightSeen = false;
+
+    const dao::script::Array party = dao::script::api::GetPartyList(dao::kInvalidObject);
+    int revived = 0;
+    for (std::size_t i = 0; i < party.Size(); ++i)
+    {
+        const dao::ObjectId id = party.Object(i);
+        if (id == dao::kInvalidObject)
+        {
+            continue;
+        }
+        const dao::CCCreature *creature = app->GetCreatureById(id);
+        if (creature == nullptr)
+        {
+            continue;
+        }
+        const std::optional<float> health = creature->Health();
+        if (!health || *health > 0.0F)
+        {
+            continue;
+        }
+        const float maxHealth = creature->MaxHealth().value_or(0.0F);
+        if (maxHealth <= 0.0F)
+        {
+            continue;
+        }
+        creature->SetProperty(dao::script::constants::PROPERTY_DEPLETABLE_HEALTH, maxHealth,
+                              dao::script::PropertyValue::Base);
+        creature->SetProperty(dao::script::constants::PROPERTY_DEPLETABLE_HEALTH, maxHealth,
+                              dao::script::PropertyValue::Current);
+        ++revived;
+        spdlog::info("revive: 0x{:08x} stands up with {:.0f} health", id, maxHealth);
+    }
+    if (g_role == Role::Host && g_myAvatar != dao::kInvalidObject && dao::party::Controlled() != g_myAvatar)
+    {
+        for (std::size_t i = 0; i < party.Size(); ++i)
+        {
+            if (party.Object(i) == g_myAvatar)
+            {
+                SendPartyIndex("control back to the player's creature at", static_cast<int>(i), 0);
+                break;
+            }
+        }
+    }
+    if (revived > 0)
+    {
+        spdlog::info("revive: {} party member(s) back after the fight", revived);
     }
 }
 
@@ -1010,6 +1125,9 @@ void NetFrame()
     {
         return;
     }
+    // The creature this player's game calls its own; the mirroring and the
+    // state packet use it even if the game moved control to a companion.
+    const dao::ObjectId avatar = g_myAvatar != dao::kInvalidObject ? g_myAvatar : controlled;
 
     // Send.
     if (dao::FrameCount() % kFramesBetweenSends == 0)
@@ -1020,7 +1138,7 @@ void NetFrame()
             if (g_role == Role::Host)
             {
                 NearbyHostile found[coop::kMaxHostiles];
-                const int count = CollectNearbyHostiles(app, controlled, found);
+                const int count = CollectNearbyHostiles(app, avatar, found);
                 packet.hostileCount = static_cast<std::uint8_t>(count);
                 for (int i = 0; i < count; ++i)
                 {
@@ -1112,6 +1230,34 @@ void NetFrame()
         }
     }
 
+    // Tactical pause: each game follows the other's pause through the same
+    // engine message the pause key sends. A short cooldown keeps the two from
+    // toggling at each other.
+    if (g_haveRemote && dao::FrameCount() > g_pauseNextFrame && dao::FrameCount() > 60)
+    {
+        const bool remotePaused = (g_remote.flags & coop::kPaused) != 0;
+        const bool localPaused = app->IsPaused();
+        if (remotePaused != localPaused)
+        {
+            dao::GameModeController *modes = app->GameModes();
+            const bool handled =
+                remotePaused ? dao::messages::Send(modes, dao::messages::Make<dao::messages::PauseMessage>())
+                             : dao::messages::Send(modes, dao::messages::Make<dao::messages::UnpauseMessage>());
+            g_pauseNextFrame = dao::FrameCount() + 45;
+            spdlog::info("pause: following the other player ({}), handled {}", remotePaused ? "paused" : "unpaused",
+                         handled);
+        }
+    }
+    // Test hook: the guest presses pause once so the two-instance rig can see
+    // whether the host follows.
+    if (g_testPause && !g_testPauseDone && g_role == Role::Guest && g_haveRemote && dao::FrameCount() > 600)
+    {
+        g_testPauseDone = true;
+        dao::GameModeController *modes = app->GameModes();
+        const bool handled = dao::messages::Send(modes, dao::messages::Make<dao::messages::PauseMessage>());
+        spdlog::info("pause: test pressed pause on the guest, handled {}", handled);
+    }
+
     const dao::Vector localPosition = local->Position();
     if (!g_anchorSet)
     {
@@ -1125,7 +1271,7 @@ void NetFrame()
     // the guest follows the host's word.
     if (g_haveRemote && g_remote.areaId == local->AreaId() && g_remote.objectId != dao::kInvalidObject)
     {
-        if (g_remote.objectId != controlled)
+        if (g_remote.objectId != avatar)
         {
             const dao::CCCreature *puppet = app->GetCreatureById(g_remote.objectId);
             if (puppet != nullptr)
@@ -1146,6 +1292,27 @@ void NetFrame()
                     dao::script::api::SetPosition(g_remote.objectId, target);
                     ++g_puppetApplied;
                 }
+                // Keep the remote creature's health in step too. While the
+                // other player is alive their creature counts as a living party
+                // member on this side, so the party is not "all dead" and the
+                // game-over screen stays away until both players are down. The
+                // maximum is set first, or the current value is clamped to the
+                // template's small one (this is what left the pet at 1/1).
+                const std::optional<float> puppetMax = puppet->MaxHealth();
+                if (g_remote.maxHealth > 0.0F &&
+                    (!puppetMax || std::fabs(*puppetMax - g_remote.maxHealth) > 1.0F))
+                {
+                    puppet->SetProperty(dao::script::constants::PROPERTY_DEPLETABLE_HEALTH, g_remote.maxHealth,
+                                        dao::script::PropertyValue::Base);
+                    ++g_puppetApplied;
+                }
+                const std::optional<float> puppetHealth = puppet->Health();
+                if (puppetHealth && std::fabs(*puppetHealth - g_remote.health) > 1.0F)
+                {
+                    puppet->SetProperty(dao::script::constants::PROPERTY_DEPLETABLE_HEALTH, g_remote.health,
+                                        dao::script::PropertyValue::Current);
+                    ++g_puppetApplied;
+                }
             }
         }
         else if (g_role == Role::Guest)
@@ -1159,7 +1326,7 @@ void NetFrame()
                 target.x = g_remote.x;
                 target.y = g_remote.y;
                 target.z = g_remote.z;
-                dao::script::api::SetPosition(controlled, target);
+                dao::script::api::SetPosition(avatar, target);
                 ++g_applied;
             }
         }
@@ -1305,6 +1472,7 @@ void Frame()
             AddCompanion();
             SelectPartyMember();
             DemoFightTick();
+            RevivePartyAfterFight();
             DamageHostileTick();
         }
     }
@@ -1445,9 +1613,46 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
     if (g_demoFight)
     {
         spdlog::info("demo fight on: the ogre spawns in sight and both creatures are ordered to attack it");
+        const std::string partyHealth = Setting("demo_party_health", "DAOCOOP_DEMO_PARTY_HEALTH");
+        if (!partyHealth.empty())
+        {
+            g_demoPartyHealth = std::strtof(partyHealth.c_str(), nullptr);
+        }
+        const std::string ogreHealth = Setting("demo_ogre_health", "DAOCOOP_DEMO_OGRE_HEALTH");
+        if (!ogreHealth.empty())
+        {
+            g_demoOgreHealth = std::strtof(ogreHealth.c_str(), nullptr);
+        }
     }
+    g_testPause = Flag("test_pause", "DAOCOOP_TEST_PAUSE");
     dao::party::OnControlChanged([](dao::ObjectId before, dao::ObjectId now) {
         spdlog::info("control: 0x{:08x} -> 0x{:08x}", before, now);
+        // The host's own creature is fixed when the world starts. When the
+        // avatar falls the game may move control to a companion; that must not
+        // change which creature this player's game names on the network.
+        if (g_role == Role::Host && g_myAvatar == dao::kInvalidObject && now != dao::kInvalidObject)
+        {
+            g_myAvatar = now;
+            spdlog::info("avatar: this player's creature is 0x{:08x}", now);
+        }
+        // And it must not take over the other player's creature: each side
+        // keeps control of its own. If the game moved control away from the
+        // avatar (to a companion, which on either side is the other player's
+        // creature), ask for the avatar back.
+        if (g_myAvatar != dao::kInvalidObject && now != dao::kInvalidObject && now != g_myAvatar)
+        {
+            const dao::script::Array party = dao::script::api::GetPartyList(dao::kInvalidObject);
+            for (std::size_t i = 0; i < party.Size(); ++i)
+            {
+                if (party.Object(i) == g_myAvatar)
+                {
+                    spdlog::info("control: not taking 0x{:08x}; asking for the player's creature 0x{:08x}", now,
+                                 g_myAvatar);
+                    SendPartyIndex("keeping control on the player's creature at", static_cast<int>(i), 0);
+                    break;
+                }
+            }
+        }
     });
 
     g_handoff = g_role == Role::Host && Flag("handoff", "DAOCOOP_HANDOFF");

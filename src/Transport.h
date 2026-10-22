@@ -27,7 +27,7 @@ namespace coop
 // 'DCOC' in little-endian, so a wrong port or an unrelated datagram is cheap
 // to reject.
 inline constexpr std::uint32_t kMagic = 0x434F4344;
-inline constexpr std::uint16_t kVersion = 3;
+inline constexpr std::uint16_t kVersion = 4;
 
 // How many nearby hostiles the host mirrors.
 inline constexpr std::uint32_t kMaxHostiles = 4;
@@ -55,6 +55,9 @@ static_assert(sizeof(HostileEntry) == 24, "the packet is its own wire format");
 
 inline constexpr std::uint32_t kHostileDead = 1U << 0;
 
+// StatePacket::flags: the sender's tactical pause is on.
+inline constexpr std::uint8_t kPaused = 1U << 0;
+
 // One player's creature, as its own game sees it, plus the hostiles the host
 // mirrors. The id is the engine's object id; both games name the same creature
 // when they load the same save.
@@ -71,12 +74,13 @@ struct StatePacket
     float y = 0.0F;
     float z = 0.0F;
     float health = 0.0F;
+    float maxHealth = 0.0F;
     std::uint32_t sentMs = 0;
     std::uint8_t hostileCount = 0; // 0..kMaxHostiles
     std::uint8_t reserved[3] = {};
     HostileEntry hostiles[kMaxHostiles] = {};
 };
-static_assert(sizeof(StatePacket) == 140, "the packet is its own wire format; keep it fixed");
+static_assert(sizeof(StatePacket) == 144, "the packet is its own wire format; keep it fixed");
 
 // A guest's request that the host execute an attack for the guest's creature.
 // The guest sends an intent, never a result: the host resolves the fight with
@@ -179,3 +183,4 @@ class Transport
 };
 
 } // namespace coop
+

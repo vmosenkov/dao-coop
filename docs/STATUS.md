@@ -165,11 +165,23 @@ Draft pending the owner's review.
 | Combat arbitration | The guest turns its own attack order (`commands::OnStart` on its controlled creature) into an `AttackRequestPacket` (request id, attacker, target). The host validates (known guest, not a repeat, attacker and target exist, target alive, same area, hostile) and runs `dao::orders::Attack` so DAO resolves the blow; an `AttackResultPacket` goes back. `tools\attack-test.ps1` **PASS**: guest sent request 1 (attacker 0x366, target 0x363), the host accepted it, the guest logged `accepted` for the same id. A request that arrives before the host has seen the guest's first state packet is refused as `bad-attacker` and the guest retries the same id (seen in the first run's log). |
 | Known limitations (open) | Animations and damage numbers are computed locally in each game and are not replicated; only position and health agree. When the host dies (or its world stops), the host stops sending state, so the guest keeps playing while its NPCs run in place — there is no pause/death handshake yet. The guest's own local blow still resolves in its own world; the host's health overwrites the result, so the authoritative fight is the host's. |
 
+## Round 6 — death, control and pause (2026-10-22, partly verified)
+
+| Item | Evidence |
+|---|---|
+| Packet v4 | `StatePacket` is 144 bytes: the player's current and **maximum** health, so a mirrored creature keeps its proper maximum. Before this the pet on the host sat at `health 1.0 / 1.0` (its template's maximum), which is why guest-attack orders were accepted but did almost no damage. |
+| Avatar fixed | Each game remembers the creature it owns (`g_myAvatar`) and keeps naming it on the network even when the game moves control to another party member. The host's creature is fixed at the first control event; the guest's after its party-member click. |
+| Control protection | A control change away from the avatar no longer hands over the other player's creature: the client asks for its own avatar back (`control: not taking 0x…; asking for the player's creature`). This is the host-not-stealing-the-guest's-character fix. |
+| Pause sync | `StatePacket::flags` bit 0 is the sender's tactical pause; the other game follows it with the engine's own `PauseMessage`/`UnpauseMessage` (45-frame cooldown). `tools\pause-test.ps1` run: guest pressed pause, both logs show `paused true`; the "following" log did not appear because the host was already paused (DAO pauses a window that lost focus while the guest was started), so the states already agreed. |
+| Death test | `tools\death-test.ps1`: host party not raised, guest raised, ogre 300 HP. Host player fell; **the host world kept running** (415-434 state lines after the fall) and the guest kept sending attack requests (7-135, all accepted). The ogre did not die in those runs because the mirrored pet was clamped to 1 HP; that is fixed by v4 but the death+revive chain needs a fresh run. |
+| Revive (unverified) | After the fight, fallen party members are set to their maximum health (the documented zero-to-positive health transition rebuilds placement and clears the dead timer, `dev/COMBAT.md:403`) and the host's control is moved back to its avatar. Not yet observed in play. |
+| Still local | Animations, damage numbers, effects and the enemies' own actions are computed by each game separately; only position and health are replicated. The guest's ogre stands still while the host's fights. This is the next large step (combat event replication). |
 ## Next actions
 
-1. Host pause/death handshake: when the host's world stops (death, loading, pause), tell the guest to freeze instead of leaving it playing.
-2. Attack animation/effect replication on top of the arbitrated blow (the guest currently sees its own local animation).
-3. Area transitions with object-id alignment (`OnAreasBuild`).
-4. A second physical PC over the LAN, then the internet transport (Steam relay).
-5. A minimal player-facing host/join flow beyond the ini file; extend the automated suite to combat and transition scenarios.
-6. Owner decisions pending: publish the 0.6.0 release artifact. (The coop-anything PR cranebeaker/coop-anything#81 was merged on 2026-10-21.)
+1. Verify the death/revive chain after the v4 maximum-health fix (death-test).
+2. Replicate combat events (attack animation, target, effects) so both games show the same fight.
+3. Verify pause sync with a test that first puts both games in the same pause state.
+4. Area transitions with object-id alignment (OnAreasBuild).
+5. A second physical PC over the LAN, then the internet transport (Steam relay).
+6. A minimal player-facing host/join flow; owner decisions: publish the 0.6.0 release artifact.
+
