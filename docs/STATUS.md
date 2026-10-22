@@ -224,12 +224,17 @@ Draft pending the owner's review.
 | Update PR | Draft [PR #141](https://github.com/cranebeaker/coop-anything/pull/141) in cranebeaker/coop-anything (branch `game/dragon-age-origins-update` in the vmosenkov fork): the Dragon Age: Origins write-up now describes the verified combat arbitration, death/revival, guest rejoin and the in-game Event Log (milestones M7-M10), the QA section lists the new tests, the known issues and next steps are current; `DIRECTORY.md` was regenerated from `data/directory.yaml` (entry `prototype` → `alpha`, `players_visible: yes`, notes and `checked: 2026-10-23`). The PR is a draft so the owner can review it, per the hub's rules. |
 | Earlier PR | [PR #81](https://github.com/cranebeaker/coop-anything/pull/81) (write-up + directory entry + prototype) was merged earlier. |
 | Filters and names | Runtime-verified: the panel shows ALL/COMBAT/MULTI/SYSTEM tabs and combat lines with the engine's creature names ("Морриган attacks Огр", "Айдан attacks Огр", "Огр died"); see `docs/images/event-log-filters.png`. Clicking a tab is not yet exercised by hand. |
+## Round 13 — settling the mirrored creature (2026-10-23)
+
+| Item | Evidence |
+|---|---|
+| "Runs in place" | The mirrored creature could keep the animation of its last command after a fight. `ClearStalePuppetCommands` (called from the frame callback on both roles) now checks, once per 2.5 s, that no fight is near (host: the alive-hostile count; guest: the mirrored hostile table) and that the copy still has a current command (`dao::commands::HeldFor`), and then drops it with `dao::script::api::ClearAllCommands(copy, 1)` (script command 538, a hard clear). A previous attempt with `RemoveCommandByIndex` did not clear it and logged every 2.5 s; the hard clear does, and the demo fight needs no clearing (its commands end naturally), so this is a safety net for a real play session. `attack-test` still PASSes after the change. Visual check of the behaviour in a live play session is still to do. |
 ## Next actions
 
-1. Verify the filter tabs and folding by hand; add scrolling through history and event details.
-2. Send the owner the diff and ask them to review/undraft PR #141.
-3. Replicate combat animations/effects between the games; then loot and bodybags.
-4. Stop the mirrored creature from playing its old command animation after a fight ('runs in place').
+1. Play a real session (the owner) and check the mirrored creature settles after fights; then tune or drop the safety net.
+2. Verify the filter tabs and folding by hand; add scrolling through history and event details.
+3. Send the owner the diff and ask them to review/undraft PR #141 in coop-anything.
+4. Replicate combat animations/effects between the games; then loot and bodybags.
 5. Area transitions with object-id alignment (OnAreasBuild); a host/join menu.
 6. A second physical PC over the LAN, then the internet transport (Steam relay).
 7. Owner decisions: publish the 0.6.0 release artifact (includes the SWF).

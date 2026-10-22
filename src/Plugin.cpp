@@ -40,6 +40,7 @@
 #include "dao/Party.h"
 #include "dao/Plugin.h"
 #include "dao/Saves.h"
+#include "dao/SubActions.h"
 #include "dao/generated/ScriptApi.h"
 
 #include <spdlog/spdlog.h>
@@ -1307,6 +1308,49 @@ void HandleGuestAttack(dao::CClientExoApp *app, const coop::AttackRequestPacket 
 //  - the guest applies the host's position to its copy of the same creature
 //  - the host, when asked, walks its character between waypoints so there is
 //    movement to sync without a human at the controls
+// See docs: the mirrored creature kept playing the animation of its last
+// command after the fight ("runs in place"). When no fight is near, drop its
+// queued command so it settles into its idle animation. Script command 534;
+// commands cannot be cleared from inside a command observer, so this runs once
+// per two and a half seconds from the frame callback instead.
+bool FightNear()
+{
+    if (g_role == Role::Host)
+    {
+        return g_combatSeen;
+    }
+    for (std::uint32_t i = 0; i < g_remote.hostileCount && i < coop::kMaxHostiles; ++i)
+    {
+        const coop::HostileEntry &entry = g_remote.hostiles[i];
+        if ((entry.flags & coop::kHostileDead) == 0 && entry.health > 0.0F)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+void ClearStalePuppetCommands(std::uint64_t frame)
+{
+    static std::uint64_t next = 0;
+    if (!InWorld() || g_remote.objectId == dao::kInvalidObject || frame < next)
+    {
+        return;
+    }
+    next = frame + 150;
+    if (FightNear())
+    {
+        return;
+    }
+    // Nothing queued means the creature is already idle: leave it alone.
+    if (!dao::commands::HeldFor(g_remote.objectId))
+    {
+        return;
+    }
+    dao::script::api::ClearAllCommands(g_remote.objectId, 1);
+    spdlog::info("puppet: dropped a stale command while no fight is near");
+}
+
 void NetFrame()
 {
     if (g_role == Role::None || !g_net.IsOpen() || !InWorld())
@@ -1885,6 +1929,10 @@ void Frame()
 
     NetFrame();
 
+    // Settle the mirrored creature when the fight is over (see the comment on
+    // ClearStalePuppetCommands).
+    ClearStalePuppetCommands(frame);
+
     // The in-game event log screen (no-op until the GUI system is up).
     coopui::Tick();
 
@@ -2196,6 +2244,8 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
     dao::OnFrame(&Frame);
     return true;
 }
+
+
 
 
 
