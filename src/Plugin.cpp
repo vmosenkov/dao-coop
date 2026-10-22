@@ -969,7 +969,21 @@ void DemoFightTick()
             const dao::ObjectId fighter = g_myAvatar != dao::kInvalidObject ? g_myAvatar : dao::party::Controlled();
             const bool ordered = dao::orders::Attack(fighter, chosen->id);
             g_demoOrdered = ordered;
+            g_demoNextAttackOrder = dao::FrameCount() + 120;
             spdlog::info("demo: guest woke 0x{:08x} and ordered its creature to attack it ({})", chosen->id, ordered);
+        }
+    }
+    // The guest's creature gets no input either; keep ordering it while the foe
+    // lives, the same way the host does, or it stands after one order.
+    if (g_role == Role::Guest && g_demoOrdered && g_haveRemote && g_remote.hostileCount > 0 &&
+        dao::FrameCount() > g_demoNextAttackOrder)
+    {
+        g_demoNextAttackOrder = dao::FrameCount() + 120;
+        const coop::HostileEntry &entry = g_remote.hostiles[0];
+        if (entry.id != dao::kInvalidObject && entry.health > 10.0F && app->GetCreatureById(entry.id) != nullptr)
+        {
+            const dao::ObjectId fighter = g_myAvatar != dao::kInvalidObject ? g_myAvatar : dao::party::Controlled();
+            dao::orders::Attack(fighter, entry.id);
         }
     }
 }
