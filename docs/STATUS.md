@@ -236,6 +236,13 @@ Draft pending the owner's review.
 | Package | `tools\package.ps1 -Version 0.7.0` built `E:\dao-coop-build\dist\dao-coop-0.7.0.zip` (7.0 MB, release preset): DAOLib loader, address files, the plugin with `coop_eventlog.swf` beside it, `README-INSTALL.txt` and `daocoop.ini.example`. |
 | Release tests | `tools\deploy.ps1 -Preset release`, then **`attack-test` PASS** (guest attack request accepted and resolved by the host) and **`reload-test` PASS** (host loaded another save, served it, guest reloaded and rejoined) on the release build. |
 | Install notes | `tools\README-INSTALL.txt` now lists combat arbitration, death/revive, guest rejoin and the in-game event log under "What works today (verified 2026-10-23)", and the missing animation/effect/loot sync, world-door transitions and the ini-only menu under "What does not work yet". |
+## Round 15 — Event Log lifecycle fixed (2026-10-23)
+
+| Item | Evidence |
+|---|---|
+| Bug | The event log panel showed in the main menu, before any save was loaded: `AddScreen` was followed by `ShowScreen` unconditionally from the first frames. |
+| Fix | `EventLogUi.cpp` now checks `dao::CClientExoApp::CurrentMode()`: the screen is shown only in explore or combat mode, hidden (`HideScreen`) in the main menu, the pregame and the loading screens, and no events/view size are pushed outside a session. |
+| Test | New `tools\ui-menu-test.ps1`: one instance with no autoload stays at the main menu; the log has `ui: event log screen added` but no `screen shown`, the screenshot has no panel — **PASS**. Then `tools\ui-shot.ps1`: after the world loads, `ui: event log screen shown` appears and the panel is in the screenshot. Both screenshots use `PrintWindow` (works with a background game window). See `docs/images/event-log-no-menu.png` and `docs/images/event-log-in-world.png`. |
 ## Next actions
 
 1. Owner playtest: two PCs on the LAN, then an internet transport (Steam relay is the planned one).

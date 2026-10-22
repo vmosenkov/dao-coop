@@ -114,3 +114,16 @@ folds it to its latest line. Combat lines now carry the engine's creature names
 through `dao::script::api::GetName`: "Айдан attacks Огр", "Морриган attacks
 Огр", "Огр died" (UTF-8 in the log, widened for the movie). See
 `docs/images/event-log-filters.png`.
+
+## Lifecycle: the log belongs to a game session (2026-10-23)
+
+The screen is registered once through `AddScreen`, but it is shown only while
+the game is in explore or combat mode (`dao::CClientExoApp::CurrentMode`), and
+`HideScreen` runs when the main menu, the pregame or a loading screen comes
+back. `tools\ui-menu-test.ps1` starts one instance without autoload, waits at
+the main menu and checks that the screen was never shown; the window screenshot
+is `docs/images/event-log-no-menu.png`. `tools\ui-shot.ps1` checks the other
+half: after the world loads the log says `ui: event log screen shown`, and the
+panel is in the screenshot (`docs/images/event-log-in-world.png`). Both
+screenshots are taken with `PrintWindow`, so they work even when the game is not
+the foreground window.

@@ -6,7 +6,9 @@
 
 #include <Windows.h>
 
+#include "dao/ClientExoApp.h"
 #include "dao/Frame.h"
+#include "dao/GameModes.h"
 #include "dao/Gui.h"
 #include "dao/World.h"
 
@@ -27,6 +29,7 @@ constexpr std::wstring_view kMovie = L"coop_eventlog";
 constexpr std::size_t kShownEvents = 8;
 
 bool g_added = false;
+bool g_shown = false;
 std::uint64_t g_nextAddFrame = 0;
 std::uint64_t g_nextTickFrame = 0;
 std::uint32_t g_lastRevision = std::uint32_t(-1);
@@ -34,6 +37,14 @@ int g_lastViewWidth = -1;
 int g_lastViewHeight = -1;
 std::vector<std::wstring> g_wideLines;
 std::vector<std::int32_t> g_categories;
+
+// True only in a running game session: the main menu, the pregame and loading
+// screens have no explore or combat mode, and the HUD is not there to own.
+bool InGameSession()
+{
+    const std::optional<dao::GameMode> mode = dao::CClientExoApp::CurrentMode();
+    return mode && (*mode == dao::GameMode::Explore || *mode == dao::GameMode::Combat);
+}
 
 // Event text is UTF-8 (creature names may be localised); AS2 strings are wide.
 std::wstring WideFromUtf8(std::string_view text)
@@ -68,9 +79,28 @@ void Tick()
         if (dao::gui::AddScreen(kScreen, kMovie, dao::gui::kLayerHud))
         {
             g_added = true;
-            dao::gui::ShowScreen(kScreen);
             spdlog::info("ui: event log screen added (movie coop_eventlog)");
         }
+        return;
+    }
+
+    // The log belongs to a running session: show it when the world is up,
+    // hide it in the main menu, the pregame and the loading screens.
+    const bool inSession = InGameSession();
+    if (inSession && !g_shown)
+    {
+        dao::gui::ShowScreen(kScreen);
+        g_shown = true;
+        spdlog::info("ui: event log screen shown");
+    }
+    else if (!inSession && g_shown)
+    {
+        dao::gui::HideScreen(kScreen);
+        g_shown = false;
+        spdlog::info("ui: event log screen hidden (no game session)");
+    }
+    if (!inSession)
+    {
         return;
     }
 

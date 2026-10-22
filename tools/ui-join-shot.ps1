@@ -38,6 +38,7 @@ Add-Type -Namespace Win32 -Name Ui -MemberDefinition @'
 [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
 [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT r);
+[DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr hWnd, IntPtr hdc, uint nFlags);
 public struct RECT { public int Left, Top, Right, Bottom; }
 '@ -ErrorAction SilentlyContinue
 
@@ -102,9 +103,16 @@ $width = $rect.Right - $rect.Left
 $height = $rect.Bottom - $rect.Top
 $bitmap = New-Object System.Drawing.Bitmap $width, $height
 $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-$graphics.CopyFromScreen($rect.Left, $rect.Top, 0, 0, (New-Object System.Drawing.Size $width, $height))
-$bitmap.Save($shot, [System.Drawing.Imaging.ImageFormat]::Png)
+$hdc = $graphics.GetHdc()
+$printed = [Win32.Ui]::PrintWindow($handle, $hdc, 2)
+$graphics.ReleaseHdc($hdc)
 $graphics.Dispose()
+if (-not $printed) {
+    $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+    $graphics.CopyFromScreen($rect.Left, $rect.Top, 0, 0, (New-Object System.Drawing.Size $width, $height))
+    $graphics.Dispose()
+}
+$bitmap.Save($shot, [System.Drawing.Imaging.ImageFormat]::Png)
 $bitmap.Dispose()
 Write-Host ("  screenshot: {0}" -f $shot)
 
