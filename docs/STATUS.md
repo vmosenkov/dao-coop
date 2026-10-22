@@ -242,7 +242,7 @@ Draft pending the owner's review.
 |---|---|
 | Bug | The event log panel showed in the main menu, before any save was loaded: `AddScreen` was followed by `ShowScreen` unconditionally from the first frames. |
 | Fix | `EventLogUi.cpp` now checks `dao::CClientExoApp::CurrentMode()`: the screen is shown only in explore or combat mode, hidden (`HideScreen`) in the main menu, the pregame and the loading screens, and no events/view size are pushed outside a session. |
-| Test | New `tools\ui-menu-test.ps1`: one instance with no autoload stays at the main menu; the log has `ui: event log screen added` but no `screen shown`, the screenshot has no panel — **PASS**. Then `tools\ui-shot.ps1`: after the world loads, `ui: event log screen shown` appears and the panel is in the screenshot. Both screenshots use `PrintWindow` (works with a background game window). See `docs/images/event-log-no-menu.png` and `docs/images/event-log-in-world.png`. |
+| Test | New `tools\ui-menu-test.ps1`: one instance with no autoload stays at the main menu; the log has `ui: event log screen added` but no `screen shown`, the screenshot has no panel — **PASS**. Then `tools\ui-shot.ps1`: after the world loads, `ui: event log screen shown` appears and the panel is in the screenshot. Both screenshots use `PrintWindow` (works with a background game window). See `docs/images/event-log-no-menu.png` and `docs/images/event-log-in-world.png`. The release package `dao-coop-0.7.0.zip` was rebuilt with the fix and both tests pass on the release build (`ui-menu-test` PASS, `ui-shot` shows the panel only after the world loads). |
 ## Next actions
 
 1. Owner playtest: two PCs on the LAN, then an internet transport (Steam relay is the planned one).
@@ -252,4 +252,5 @@ Draft pending the owner's review.
 5. World-door area transitions (needs a way to test a transition; the API exposes DoAreaTransition but no walkable waypoint lookup yet).
 6. An in-game host/join menu to replace the ini file.
 7. Publish the 0.7.0 artifact when the owner says so (the repository rules keep releases to the owner).
+
 
