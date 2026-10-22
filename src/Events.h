@@ -63,12 +63,16 @@ class EventLog
         {
             events_.pop_front();
         }
+        ++revision_;
     }
 
     const std::deque<GameEvent> &Recent() const { return events_; }
+    // Rises on every event; a UI redraws only when it changed.
+    std::uint32_t Revision() const { return revision_; }
 
   private:
     std::deque<GameEvent> events_;
+    std::uint32_t revision_ = 0;
 };
 
 } // namespace coop

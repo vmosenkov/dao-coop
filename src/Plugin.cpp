@@ -23,6 +23,7 @@
 //   DAOCOOP_DRIVE=1        host only: walk between waypoints for testing
 //   DAOCOOP_HOST_PORT      default 45830
 //   DAOCOOP_GUEST_PORT     default 45831
+#include "EventLogUi.h"
 #include "Events.h"
 #include "SaveTransfer.h"
 #include "Transport.h"
@@ -1835,6 +1836,9 @@ void Frame()
 
     NetFrame();
 
+    // The in-game event log screen (no-op until the GUI system is up).
+    coopui::Tick();
+
     static std::uint64_t lastLogged = 0;
     if (frame - lastLogged < kFramesBetweenLogs)
     {
@@ -2104,6 +2108,7 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
     dao::OnFrame(&Frame);
     return true;
 }
+
 
 
 

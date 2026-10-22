@@ -51,6 +51,7 @@ Copy-Item (Join-Path $build 'dinput8.dll') $ship
 Copy-Item (Join-Path $build 'dinput8.pdb') $ship -ErrorAction SilentlyContinue
 Copy-Item (Join-Path $build 'daolib\plugins\daocoop\daocoop.dll') $plugin
 Copy-Item (Join-Path $build 'daolib\plugins\daocoop\daocoop.pdb') $plugin -ErrorAction SilentlyContinue
+Copy-Item (Join-Path $build 'daolib\plugins\daocoop\coop_eventlog.swf') $plugin -ErrorAction SilentlyContinue
 Copy-Item (Join-Path $build 'daolib\addresses\*.bin') (Join-Path $ship 'daolib\addresses')
 Copy-Item (Join-Path $repo 'daocoop.ini.example') $stage
 Copy-Item (Join-Path $repo 'tools\README-INSTALL.txt') $stage
@@ -62,3 +63,4 @@ Remove-Item -Recurse -Force $stage
 
 Write-Host "packaged: $zip"
 Get-Item $zip | ForEach-Object { Write-Host ("  {0:N1} MB" -f ($_.Length / 1MB)) }
+

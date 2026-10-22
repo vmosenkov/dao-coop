@@ -193,12 +193,23 @@ Draft pending the owner's review.
 | Revive fix | A corpse left in the hostile table no longer counts as an ongoing fight: `RevivePartyAfterFight` now looks only at entries that are alive (`!dead` and health > 0), on the host and through the mirrored table on the guest. Before this the dead ogre kept the fight "running" and revive never fired. |
 | In-game log window | Investigated with Codex: `PrintToLogWindow` (82) pops its arguments and does nothing, and `PrintToLog` (5) writes only to the engine's Script file-log channel (off by default); the game has no message-log movie. A persistent panel therefore needs the plugin's own SWF loaded into a HUD movie (`dao::gui::ScreenMovie`, `LoadInto`, `Movie::SetVariable`/`SetArray` in `Gui.h`), which needs a `.swf` asset that does not exist yet. The current on-screen output stays `DisplayStatusMessage` (throttled). |
 | Test hooks | `DAOCOOP_TEST_RELOAD` (load another save, guest rejoins), `DAOCOOP_TEST_VICTORY` (defeat the hostile after the fall), `DAOCOOP_TEST_KILL_PLAYER` (kill the host player on purpose). |
+## Round 9 — in-game Event Log SWF (verified in DAO, 2026-10-23)
+
+| Item | Evidence |
+|---|---|
+| Pipeline | `ui/eventlog/frame_1/DoAction.as` (ActionScript 2) -> `python tools\movie.py --ffdec C:\Modding\ffdec_26.3.0 coop_eventlog` -> `ui/coop_eventlog.swf` (SWF 8, 4057 bytes), packaged by `add_daolib_plugin(... FILES ui/coop_eventlog.swf)` beside `daocoop.dll`. The generator is adapted from DAOTurnBased's `tools/movie.py` (GPLv3); the shell imports the game's `$TitleFont`/`$BodyFont` from `gfxfontlib.swf`, and FFDec compiles and then re-exports the script to prove it survived. See `docs/UI.md`. |
+| Integration | `src/EventLogUi.cpp` retries `dao::gui::AddScreen(L"CoopEventLog", L"coop_eventlog", kLayerHud)` until the GUI system is up, shows it, then four times a second pushes the view size and, when `EventLog::Revision()` changed, the last eight event texts through `Movie::SetArray` + `_root.count`/`_root.revision` through `Movie::SetVariable`. |
+| Smoke test 1 | `tools\ui-shot.ps1`: host reached the world; log `ui: event log screen added (movie coop_eventlog)`, `ui: event log view 960x540`; the window screenshot shows the panel with "Co-op Event Log initialized." and the sample lines. |
+| Smoke test 2 | `tools\ui-join-shot.ps1`: host + guest join; host log `event: [multiplayer] Another player joined the game` then `ui: event log revision 1 (1 line(s))`; guest revision 2. The host screenshot shows "Another player joined the game." — a real `EventLog::Recent()` event drawn by our SWF. |
+| Verified UI API | `dao::gui::AddScreen/ShowScreen/ScreenMovie`, `Movie::SetVariable/SetArray`, `Value::Number/WString`, `HasMovie`, `dao::world::ScreenSize` — all cited in `Gui.h`/`World.h`; no invented calls. |
+| Limits | Panel always visible (no collapse/filters/scroll yet); layout checked at 960x540/1024x768; last eight events of all categories; the movie needs the game's font library (a standalone player needs a stub). |
 ## Next actions
 
-1. A real in-game event panel in DAO's style: build a small SWF with several text rows, load it into a HUD movie with `dao::gui::LoadInto` and fill it from `EventLog::Recent()`; filters and expandable entries after that.
-2. Replicate combat events (attack/death animations, damage numbers) — position, health, target and attack start are already mirrored; the missing piece is the animation/effect event itself.
-3. Stop the mirrored creature from playing its old command animation after the fight ("runs in place"): look for a verified way to clear the puppet's command queue.
-4. Host pause/death handshake polish; verify the status messages are visible in combat and explore modes.
-5. Area transitions with object-id alignment (`OnAreasBuild`).
+1. Panel UX: collapse/hide, All/Combat/Multiplayer/System filters, scrolling, event details (only after the SWF pipeline, now proven).
+2. Replicate combat events into the log (attack/miss/damage/death) from the arbitration path; keep technical messages in the file log.
+3. Replicate combat animations/effects between the games (the remaining visual gap).
+4. Stop the mirrored creature from playing its old command animation after a fight ('runs in place').
+5. Area transitions with object-id alignment (OnAreasBuild).
 6. A second physical PC over the LAN, then the internet transport (Steam relay).
-7. Owner decisions: publish the 0.6.0 release artifact.
+7. Owner decisions: publish the 0.6.0 release artifact (include the SWF; package.ps1 now copies it).
+
