@@ -3,3 +3,5 @@ build/
 *.user
 dist/
 local/
+__pycache__/
+*.pyc
