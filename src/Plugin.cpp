@@ -140,6 +140,9 @@ bool g_demoOrdered = false;
 // game made it, so a death test can let the host fall while the guest lives.
 float g_demoPartyHealth = 5000.0F;
 float g_demoOgreHealth = 1500.0F;
+// When to tell the host player's creature to attack again (it gets no input in
+// the demonstration, so a single order is not enough).
+std::uint64_t g_demoNextAttackOrder = 0;
 // The player's own creature, fixed when the world starts: if the game moves
 // control to another party member (the avatar fell), the network keeps naming
 // the avatar, not whoever the game selected.
@@ -921,8 +924,25 @@ void DemoFightTick()
         }
         const dao::ObjectId fighter = g_myAvatar != dao::kInvalidObject ? g_myAvatar : dao::party::Controlled();
         const bool ordered = dao::orders::Attack(fighter, g_hostileId);
+        g_demoNextAttackOrder = dao::FrameCount() + 120;
         spdlog::info("demo: fight started at 0x{:08x} (active, AI on, attack order {})", g_hostileId, ordered);
         return;
+    }
+    // The host player's creature does not get input in the demonstration; keep
+    // ordering it to attack while the foe lives, or it just stands there.
+    if (g_role == Role::Host && g_demoStarted && g_hostileId != dao::kInvalidObject &&
+        dao::FrameCount() > g_demoNextAttackOrder)
+    {
+        g_demoNextAttackOrder = dao::FrameCount() + 120;
+        if (const dao::CCCreature *ogre = app->GetCreatureById(g_hostileId))
+        {
+            if (ogre->Health().value_or(0.0F) > 0.0F)
+            {
+                const dao::ObjectId fighter =
+                    g_myAvatar != dao::kInvalidObject ? g_myAvatar : dao::party::Controlled();
+                dao::orders::Attack(fighter, g_hostileId);
+            }
+        }
     }
     if (g_role == Role::Guest && !g_demoOrdered && g_haveRemote && g_remote.hostileCount > 0)
     {
