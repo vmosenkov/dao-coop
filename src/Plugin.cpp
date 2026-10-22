@@ -158,8 +158,10 @@ std::map<dao::ObjectId, std::pair<dao::ObjectId, std::uint64_t>> g_hostileTarget
 std::map<dao::ObjectId, std::uint32_t> g_hostileAttackSeq;
 std::map<dao::ObjectId, std::uint32_t> g_seenAttackSeq;
 // Commands a creature is running: a creature in a fight must not be teleported
-// by the position mirror every frame, or its blow never lands.
+// by the position mirror every frame, or its blow never lands. The skip is
+// short (the swing window) so the two games do not drift apart.
 std::map<dao::ObjectId, int> g_busyCreatures;
+std::map<dao::ObjectId, std::uint64_t> g_lastAttackStart;
 // Pause synchronisation: the two games follow each other's tactical pause.
 std::uint64_t g_pauseNextFrame = 0;
 bool g_testPause = false;
@@ -1343,13 +1345,16 @@ void NetFrame()
                 const float distance = std::sqrt((dx * dx) + (dy * dy) + (dz * dz));
                 g_puppetId = g_remote.objectId;
                 g_puppetDistance = distance;
-                // A creature in a fight must not be teleported back to the
-                // other game's position every frame, or its blow never lands:
-                // let it finish the attack, the position can catch up when the
-                // command ends.
+                // A creature must not be teleported back to the other game's
+                // position during its swing, or its blow never lands; the skip
+                // lasts only the first frames of the attack, so the two games
+                // still track each other and do not drift apart.
                 const auto busyIt = g_busyCreatures.find(g_remote.objectId);
-                const bool puppetBusy = busyIt != g_busyCreatures.end() && busyIt->second > 0;
-                if (!puppetBusy && distance > kApplyTolerance)
+                const auto startedIt = g_lastAttackStart.find(g_remote.objectId);
+                const bool inSwing = busyIt != g_busyCreatures.end() && busyIt->second > 0 &&
+                                     startedIt != g_lastAttackStart.end() &&
+                                     dao::FrameCount() - startedIt->second < 30;
+                if (!inSwing && distance > kApplyTolerance)
                 {
                     dao::Vector target{};
                     target.x = g_remote.x;
@@ -1785,6 +1790,7 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
         if (command.Type() == dao::core::CommandType::Attack)
         {
             const std::optional<dao::ObjectId> attackTarget = command.Target();
+            g_lastAttackStart[object] = dao::FrameCount();
             spdlog::info("cmd: 0x{:08x} attack start -> 0x{:08x}", object,
                          attackTarget.has_value() ? *attackTarget : dao::kInvalidObject);
         }
