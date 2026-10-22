@@ -150,7 +150,10 @@ bool g_fightSeen = false;
 // The host mirrors what each hostile is attacking, so the guest's copy can
 // fight the same fight instead of standing still.
 std::map<dao::ObjectId, std::pair<dao::ObjectId, std::uint64_t>> g_hostileTargets;
-std::uint64_t g_mirrorAttackNextFrame = 0;
+// Every attack start, counted per creature on the host, and the last one the
+// guest has mirrored.
+std::map<dao::ObjectId, std::uint32_t> g_hostileAttackSeq;
+std::map<dao::ObjectId, std::uint32_t> g_seenAttackSeq;
 // Commands a creature is running: a creature in a fight must not be teleported
 // by the position mirror every frame, or its blow never lands.
 std::map<dao::ObjectId, int> g_busyCreatures;
@@ -793,6 +796,7 @@ struct NearbyHostile
     float health = 0.0F;
     bool dead = false;
     dao::ObjectId target = dao::kInvalidObject;
+    std::uint32_t attackSeq = 0;
 };
 
 int CollectNearbyHostiles(dao::CClientExoApp *app, dao::ObjectId player, NearbyHostile out[coop::kMaxHostiles])
@@ -841,6 +845,11 @@ int CollectNearbyHostiles(dao::CClientExoApp *app, dao::ObjectId player, NearbyH
         if (known != g_hostileTargets.end() && dao::FrameCount() - known->second.second < kTargetRememberFrames)
         {
             out[count].target = known->second.first;
+        }
+        const auto attackSeq = g_hostileAttackSeq.find(id);
+        if (attackSeq != g_hostileAttackSeq.end())
+        {
+            out[count].attackSeq = attackSeq->second;
         }
         ++count;
     }
@@ -1164,6 +1173,7 @@ void NetFrame()
                     packet.hostiles[i].flags = found[i].dead ? coop::kHostileDead : 0;
                     packet.hostiles[i].target =
                         found[i].target != dao::kInvalidObject ? found[i].target : 0;
+                    packet.hostiles[i].attackSeq = found[i].attackSeq;
                 }
             }
             g_net.Send(packet);
@@ -1386,23 +1396,29 @@ void NetFrame()
                 dao::script::api::SetPosition(entry.id, target);
             }
             const std::optional<float> localHealth = hostile->Health();
-            if (localHealth && std::fabs(*localHealth - entry.health) > 1.0F)
+            if (localHealth && std::fabs(*localHealth - entry.health) > 0.05F)
             {
                 hostile->SetProperty(dao::script::constants::PROPERTY_DEPLETABLE_HEALTH, entry.health,
                                      dao::script::PropertyValue::Current);
                 ++g_hostileApplied;
                 ++appliedHere;
             }
-            // The host also mirrors what the creature is attacking, so the
-            // guest's copy fights the same fight instead of standing still.
-            if (entry.target != 0 && dao::FrameCount() > g_mirrorAttackNextFrame)
+            // The host mirrors every attack it starts (a rising sequence number
+            // per creature), so the guest orders its copy exactly when the
+            // host's copy swings, instead of on a timer.
+            if (entry.target != 0 && entry.attackSeq != 0)
             {
-                if (app->GetCreatureById(entry.target) != nullptr &&
-                    dao::script::api::IsObjectHostile(entry.id, entry.target) != 0)
+                const auto seen = g_seenAttackSeq.find(entry.id);
+                if (seen == g_seenAttackSeq.end() || seen->second != entry.attackSeq)
                 {
-                    const bool ordered = dao::orders::Attack(entry.id, entry.target);
-                    g_mirrorAttackNextFrame = dao::FrameCount() + 90;
-                    spdlog::info("mirror: hostile 0x{:08x} attacks 0x{:08x} ({})", entry.id, entry.target, ordered);
+                    if (app->GetCreatureById(entry.target) != nullptr &&
+                        dao::script::api::IsObjectHostile(entry.id, entry.target) != 0)
+                    {
+                        const bool ordered = dao::orders::Attack(entry.id, entry.target);
+                        g_seenAttackSeq[entry.id] = entry.attackSeq;
+                        spdlog::info("mirror: hostile 0x{:08x} attack {} -> 0x{:08x} ({})", entry.id,
+                                     entry.attackSeq, entry.target, ordered);
+                    }
                 }
             }
         }
@@ -1732,6 +1748,12 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
     // processed, so keep it short and only record the intent.
     dao::commands::OnStart([](dao::ObjectId object, const dao::Command &command) {
         ++g_busyCreatures[object];
+        if (command.Type() == dao::core::CommandType::Attack)
+        {
+            const std::optional<dao::ObjectId> attackTarget = command.Target();
+            spdlog::info("cmd: 0x{:08x} attack start -> 0x{:08x}", object,
+                         attackTarget.has_value() ? *attackTarget : dao::kInvalidObject);
+        }
         // Host: remember what each creature is attacking, so the hostile table
         // can tell the guest's copy whom to fight.
         if (g_role == Role::Host && command.Type() == dao::core::CommandType::Attack)
@@ -1740,6 +1762,7 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
             if (target.has_value() && *target != dao::kInvalidObject)
             {
                 g_hostileTargets[object] = {*target, dao::FrameCount()};
+                ++g_hostileAttackSeq[object];
             }
         }
         if (g_role != Role::Guest || g_pendingAttack.valid)
@@ -1768,8 +1791,10 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
     });
 
     dao::commands::OnEnd([](dao::ObjectId object, const dao::Command &command, std::int32_t result) {
-        (void)command;
-        (void)result;
+        if (command.Type() == dao::core::CommandType::Attack)
+        {
+            spdlog::info("cmd: 0x{:08x} attack end result {}", object, dao::commands::ResultName(result));
+        }
         const auto it = g_busyCreatures.find(object);
         if (it != g_busyCreatures.end() && --it->second <= 0)
         {
@@ -1780,6 +1805,7 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
     dao::OnFrame(&Frame);
     return true;
 }
+
 
 
 

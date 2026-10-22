@@ -5,6 +5,12 @@ This repository is the co-op mod for **Dragon Age: Origins – Ultimate Edition*
 The repository is the source of truth: read the code before trusting any
 summary, including the ones in `docs/`.
 
+## Working style (Ponytail)
+
+Follow `docs/PONYTAIL.md`: the smallest complete change, reuse what is here, no speculative
+abstractions, one-line *why* comments, and a shortcut: comment where a known limit is left.
+Never cut validation, error handling or security.
+
 ## What the project is
 
 Two game processes, **host authoritative**: the guest joins by receiving the
@@ -72,3 +78,4 @@ Next:        the smallest logical next step
 Distinguish **implemented** (code exists), **builds** (compiled), **automated
 tested** (a script passed), **runtime tested** (seen in Dragon Age: Origins)
 and **not verified**. Never write "works" without a run.
+

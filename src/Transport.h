@@ -27,7 +27,7 @@ namespace coop
 // 'DCOC' in little-endian, so a wrong port or an unrelated datagram is cheap
 // to reject.
 inline constexpr std::uint32_t kMagic = 0x434F4344;
-inline constexpr std::uint16_t kVersion = 5;
+inline constexpr std::uint16_t kVersion = 6;
 
 // How many nearby hostiles the host mirrors.
 inline constexpr std::uint32_t kMaxHostiles = 4;
@@ -50,10 +50,10 @@ struct HostileEntry
     float z = 0.0F;
     float health = 0.0F;
     std::uint32_t flags = 0;  // HostileFlag::kHostileDead, else 0
-    std::uint32_t target = 0; // what it is attacking, 0 for none (so the guest
-                              // can make its copy fight the same fight)
+    std::uint32_t attackSeq = 0; // rises on every attack the host starts
+    std::uint32_t target = 0;    // what it is attacking, 0 for none
 };
-static_assert(sizeof(HostileEntry) == 28, "the packet is its own wire format");
+static_assert(sizeof(HostileEntry) == 32, "the packet is its own wire format");
 
 inline constexpr std::uint32_t kHostileDead = 1U << 0;
 
@@ -82,7 +82,7 @@ struct StatePacket
     std::uint8_t reserved[3] = {};
     HostileEntry hostiles[kMaxHostiles] = {};
 };
-static_assert(sizeof(StatePacket) == 160, "the packet is its own wire format; keep it fixed");
+static_assert(sizeof(StatePacket) == 176, "the packet is its own wire format; keep it fixed");
 
 // A guest's request that the host execute an attack for the guest's creature.
 // The guest sends an intent, never a result: the host resolves the fight with
@@ -185,5 +185,6 @@ class Transport
 };
 
 } // namespace coop
+
 
 
