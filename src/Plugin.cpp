@@ -27,6 +27,7 @@
 #include "Transport.h"
 
 #include "dao/ClientExoApp.h"
+#include "dao/CommandEvents.h"
 #include "dao/Frame.h"
 #include "dao/Log.h"
 #include "dao/Messages.h"
@@ -136,6 +137,31 @@ bool g_demoFight = false;
 bool g_demoStarted = false;
 bool g_demoOrdered = false;
 bool g_handoffWritten = false; // the handoff save is on disk
+
+// Combat arbitration: the guest turns its own attack order into a request and
+// sends it to the host, which validates it and executes the attack in its
+// world; the host's answer is logged (the outcome arrives as hostile state).
+struct PendingAttack
+{
+    bool valid = false;
+    std::uint32_t requestId = 0;
+    dao::ObjectId attacker = dao::kInvalidObject;
+    dao::ObjectId target = dao::kInvalidObject;
+};
+
+PendingAttack g_pendingAttack;
+std::uint32_t g_attackRequestSeq = 0;
+std::uint32_t g_lastGuestRequest = 0;
+std::uint64_t g_attackRequestsAccepted = 0;
+std::uint64_t g_attackRequestsRefused = 0;
+// A request that arrives before the host has seen the guest's first state
+// packet is refused as bad-attacker; the guest repeats it a couple of times
+// instead of losing the player's action.
+bool g_attackAwaiting = false;
+int g_attackResends = 0;
+std::uint32_t g_attackLastRequest = 0;
+dao::ObjectId g_attackLastAttacker = dao::kInvalidObject;
+dao::ObjectId g_attackLastTarget = dao::kInvalidObject;
 
 // Reads an environment variable without the deprecated getenv (/W4 /WX at
 // DAOLib's settings treats its warning as an error).
@@ -875,6 +901,88 @@ void DemoFightTick()
     }
 }
 
+// Combat arbitration, host side: validate a guest's attack intent and, when it
+// passes, order the attack in the host's own world. DAO resolves the fight.
+const char *AttackResultName(coop::AttackResult result)
+{
+    switch (result)
+    {
+    case coop::AttackResult::Accepted:
+        return "accepted";
+    case coop::AttackResult::StaleRequest:
+        return "stale-request";
+    case coop::AttackResult::BadAttacker:
+        return "bad-attacker";
+    case coop::AttackResult::BadTarget:
+        return "bad-target";
+    case coop::AttackResult::NotHostile:
+        return "not-hostile";
+    case coop::AttackResult::WrongArea:
+        return "wrong-area";
+    case coop::AttackResult::OrderRefused:
+        return "order-refused";
+    }
+    return "unknown";
+}
+
+void HandleGuestAttack(dao::CClientExoApp *app, const coop::AttackRequestPacket &request)
+{
+    if (g_role != Role::Host)
+    {
+        return;
+    }
+    coop::AttackResult result = coop::AttackResult::Accepted;
+    const dao::CCCreature *attacker = app->GetCreatureById(request.attacker);
+    const dao::CCCreature *target = app->GetCreatureById(request.target);
+    const dao::CCObject *local = app->GetObjectById(dao::party::Controlled());
+    if (!g_haveRemote || request.attacker != g_remote.objectId)
+    {
+        result = coop::AttackResult::BadAttacker;
+    }
+    else if (request.requestId <= g_lastGuestRequest)
+    {
+        result = coop::AttackResult::StaleRequest;
+    }
+    else if (attacker == nullptr)
+    {
+        result = coop::AttackResult::BadAttacker;
+    }
+    else if (target == nullptr || dao::script::api::IsDead(request.target) != 0)
+    {
+        result = coop::AttackResult::BadTarget;
+    }
+    else if (local != nullptr && target->AreaId() != local->AreaId())
+    {
+        result = coop::AttackResult::WrongArea;
+    }
+    else if (dao::script::api::IsObjectHostile(request.attacker, request.target) == 0)
+    {
+        result = coop::AttackResult::NotHostile;
+    }
+    else
+    {
+        g_lastGuestRequest = request.requestId;
+        if (dao::orders::Attack(request.attacker, request.target))
+        {
+            ++g_attackRequestsAccepted;
+        }
+        else
+        {
+            result = coop::AttackResult::OrderRefused;
+            ++g_attackRequestsRefused;
+        }
+    }
+
+    coop::AttackResultPacket answer{};
+    answer.flags = static_cast<std::uint8_t>(result);
+    answer.requestId = request.requestId;
+    answer.attacker = request.attacker;
+    answer.target = request.target;
+    g_net.Send(answer);
+    spdlog::info("attack: guest request {} attacker 0x{:08x} target 0x{:08x} -> {}", request.requestId,
+                 request.attacker, request.target, AttackResultName(result));
+}
+
 // Milestone 2: one frame's worth of co-op.
 //  - both roles send their controlled creature's state about 20 times a second
 //  - both drain the socket every frame
@@ -936,6 +1044,71 @@ void NetFrame()
         {
             g_remote = incoming;
             g_haveRemote = true;
+        }
+    }
+
+    // Combat arbitration. The guest sends the intent its own game just saw (an
+    // attack order), the host validates it, executes it in its own world and
+    // answers; the guest logs the answer. The authoritative outcome arrives as
+    // the hostile table's health, which the host owns.
+    if (g_role == Role::Guest && g_pendingAttack.valid && g_haveRemote)
+    {
+        coop::AttackRequestPacket request{};
+        request.requestId = g_pendingAttack.requestId;
+        request.attacker = g_pendingAttack.attacker;
+        request.target = g_pendingAttack.target;
+        if (g_net.Send(request))
+        {
+            spdlog::info("attack: request {} sent (attacker 0x{:08x}, target 0x{:08x})", request.requestId,
+                         request.attacker, request.target);
+            g_attackAwaiting = true;
+            g_attackLastRequest = request.requestId;
+            g_attackLastAttacker = request.attacker;
+            g_attackLastTarget = request.target;
+            g_pendingAttack.valid = false;
+        }
+    }
+    if (g_role == Role::Host)
+    {
+        coop::AttackRequestPacket request{};
+        if (g_net.Receive(request))
+        {
+            HandleGuestAttack(app, request);
+        }
+    }
+    else
+    {
+        coop::AttackResultPacket answer{};
+        if (g_net.Receive(answer))
+        {
+            const auto result = static_cast<coop::AttackResult>(answer.flags);
+            if (result == coop::AttackResult::Accepted)
+            {
+                ++g_attackRequestsAccepted;
+                g_attackAwaiting = false;
+                g_attackResends = 0;
+            }
+            else
+            {
+                ++g_attackRequestsRefused;
+                // The host may simply not have seen the guest yet; repeat the
+                // same request instead of losing the player's action.
+                if (result == coop::AttackResult::BadAttacker && g_attackAwaiting && g_attackResends < 2)
+                {
+                    ++g_attackResends;
+                    g_pendingAttack.valid = true;
+                    g_pendingAttack.requestId = g_attackLastRequest;
+                    g_pendingAttack.attacker = g_attackLastAttacker;
+                    g_pendingAttack.target = g_attackLastTarget;
+                    spdlog::info("attack: retrying request {} (attempt {})", g_attackLastRequest, g_attackResends + 1);
+                }
+                else
+                {
+                    g_attackAwaiting = false;
+                }
+            }
+            spdlog::info("attack: result for request {} (attacker 0x{:08x}, target 0x{:08x}): {}", answer.requestId,
+                         answer.attacker, answer.target, AttackResultName(result));
         }
     }
 
@@ -1315,8 +1488,38 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
             spdlog::info("game loaded: a new game");
         }
     });
+    // Guest: watch its own creature's attack orders and turn them into requests
+    // for the host. OnStart runs on the game thread while the queue is
+    // processed, so keep it short and only record the intent.
+    dao::commands::OnStart([](dao::ObjectId object, const dao::Command &command) {
+        if (g_role != Role::Guest || g_pendingAttack.valid)
+        {
+            return;
+        }
+        if (command.Type() != dao::core::CommandType::Attack)
+        {
+            return;
+        }
+        if (object != dao::party::Controlled())
+        {
+            return;
+        }
+        const std::optional<dao::ObjectId> target = command.Target();
+        if (!target.has_value() || *target == dao::kInvalidObject)
+        {
+            return;
+        }
+        g_pendingAttack.valid = true;
+        g_pendingAttack.requestId = ++g_attackRequestSeq;
+        g_pendingAttack.attacker = object;
+        g_pendingAttack.target = *target;
+        spdlog::info("attack: guest saw 0x{:08x} ordered to attack 0x{:08x}; request {} queued", object, *target,
+                     g_pendingAttack.requestId);
+    });
+
     dao::OnFrame(&Frame);
     return true;
 }
+
 
 

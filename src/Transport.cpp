@@ -1,5 +1,6 @@
 // The UDP transport's implementation (Transport.h). One socket, three packet
-// kinds, and a receive that refuses anything not from the configured peer.
+// kinds, one pending slot, and a receive that refuses anything not from the
+// configured peer.
 #include "Transport.h"
 
 #include <WinSock2.h>
@@ -24,11 +25,6 @@ bool StartWinsock()
     return started;
 }
 
-std::uint32_t NowMs()
-{
-    return static_cast<std::uint32_t>(GetTickCount64());
-}
-
 template <class T> bool SendOne(SOCKET socket, const sockaddr_in &peer, T packet)
 {
     packet.magic = kMagic;
@@ -43,33 +39,15 @@ bool SamePeer(const sockaddr_in &a, const sockaddr_in &b)
     return a.sin_family == b.sin_family && a.sin_port == b.sin_port && a.sin_addr.s_addr == b.sin_addr.s_addr;
 }
 
-// One datagram of the kind asked for, from the peer only; other kinds and
-// other senders are dropped without blocking.
-template <class T> bool ReceiveOne(SOCKET socket, const sockaddr_in &peer, PacketKind kind, T &packet, std::uint64_t &received,
-                                   std::uint64_t &dropped)
+// The first eight bytes every packet starts with.
+struct Header
 {
-    for (;;)
-    {
-        T incoming{};
-        sockaddr_in from{};
-        int fromSize = sizeof from;
-        const int got = ::recvfrom(socket, reinterpret_cast<char *>(&incoming), static_cast<int>(sizeof incoming), 0,
-                                   reinterpret_cast<sockaddr *>(&from), &fromSize);
-        if (got == SOCKET_ERROR)
-        {
-            return false; // nothing waiting (WSAEWOULDBLOCK)
-        }
-        if (!SamePeer(from, peer) || got != static_cast<int>(sizeof incoming) || incoming.magic != kMagic ||
-            incoming.version != kVersion || incoming.kind != kind)
-        {
-            ++dropped;
-            continue;
-        }
-        ++received;
-        packet = incoming;
-        return true;
-    }
-}
+    std::uint32_t magic = 0;
+    std::uint16_t version = 0;
+    PacketKind kind = PacketKind::State;
+    std::uint8_t flags = 0;
+};
+static_assert(sizeof(Header) == 8, "the header is the shared prefix of every packet");
 
 } // namespace
 
@@ -139,12 +117,12 @@ void Transport::Close()
         ::closesocket(static_cast<SOCKET>(socket_));
         socket_ = kNoSocket;
     }
+    pendingValid_ = false;
 }
 
 bool Transport::Send(const StatePacket &packet)
 {
-    if (!IsOpen() || !SendOne(static_cast<SOCKET>(socket_),
-                              *reinterpret_cast<const sockaddr_in *>(peer_), packet))
+    if (!IsOpen() || !SendOne(static_cast<SOCKET>(socket_), *reinterpret_cast<const sockaddr_in *>(peer_), packet))
     {
         return false;
     }
@@ -154,8 +132,7 @@ bool Transport::Send(const StatePacket &packet)
 
 bool Transport::Send(const AttackRequestPacket &packet)
 {
-    if (!IsOpen() || !SendOne(static_cast<SOCKET>(socket_),
-                              *reinterpret_cast<const sockaddr_in *>(peer_), packet))
+    if (!IsOpen() || !SendOne(static_cast<SOCKET>(socket_), *reinterpret_cast<const sockaddr_in *>(peer_), packet))
     {
         return false;
     }
@@ -165,8 +142,7 @@ bool Transport::Send(const AttackRequestPacket &packet)
 
 bool Transport::Send(const AttackResultPacket &packet)
 {
-    if (!IsOpen() || !SendOne(static_cast<SOCKET>(socket_),
-                              *reinterpret_cast<const sockaddr_in *>(peer_), packet))
+    if (!IsOpen() || !SendOne(static_cast<SOCKET>(socket_), *reinterpret_cast<const sockaddr_in *>(peer_), packet))
     {
         return false;
     }
@@ -174,22 +150,98 @@ bool Transport::Send(const AttackResultPacket &packet)
     return true;
 }
 
+bool Transport::ReceiveRaw(void *out, std::size_t outSize, PacketKind expected)
+{
+    if (!IsOpen())
+    {
+        return false;
+    }
+    // A datagram of another kind that arrived earlier and was kept for us.
+    if (pendingValid_ && pendingKind_ == expected && pendingSize_ == outSize)
+    {
+        std::memcpy(out, pendingData_, outSize);
+        pendingValid_ = false;
+        ++received_;
+        return true;
+    }
+
+    const sockaddr_in &peer = *reinterpret_cast<const sockaddr_in *>(peer_);
+    for (;;)
+    {
+        std::uint8_t buffer[256] = {};
+        sockaddr_in from{};
+        int fromSize = sizeof from;
+        const int got = ::recvfrom(static_cast<SOCKET>(socket_), reinterpret_cast<char *>(buffer),
+                                   static_cast<int>(sizeof buffer), 0, reinterpret_cast<sockaddr *>(&from), &fromSize);
+        if (got == SOCKET_ERROR)
+        {
+            return false; // nothing waiting (WSAEWOULDBLOCK)
+        }
+        if (!SamePeer(from, peer) || got < static_cast<int>(sizeof(Header)))
+        {
+            ++dropped_;
+            continue;
+        }
+        Header header{};
+        std::memcpy(&header, buffer, sizeof header);
+        if (header.magic != kMagic || header.version != kVersion)
+        {
+            ++dropped_;
+            continue;
+        }
+        if (header.kind == expected)
+        {
+            if (got != static_cast<int>(outSize))
+            {
+                ++dropped_;
+                continue;
+            }
+            std::memcpy(out, buffer, outSize);
+            ++received_;
+            return true;
+        }
+        // Another kind: keep one for its own Receive call, with its own size.
+        std::size_t otherSize = 0;
+        switch (header.kind)
+        {
+        case PacketKind::State:
+            otherSize = sizeof(StatePacket);
+            break;
+        case PacketKind::AttackRequest:
+            otherSize = sizeof(AttackRequestPacket);
+            break;
+        case PacketKind::AttackResult:
+            otherSize = sizeof(AttackResultPacket);
+            break;
+        default:
+            break;
+        }
+        if (otherSize == 0 || got != static_cast<int>(otherSize) || pendingValid_)
+        {
+            ++dropped_;
+            continue;
+        }
+        std::memcpy(pendingData_, buffer, otherSize);
+        pendingSize_ = otherSize;
+        pendingKind_ = header.kind;
+        pendingValid_ = true;
+    }
+}
+
 bool Transport::Receive(StatePacket &packet)
 {
-    return IsOpen() && ReceiveOne(static_cast<SOCKET>(socket_), *reinterpret_cast<const sockaddr_in *>(peer_),
-                                  PacketKind::State, packet, received_, dropped_);
+    return ReceiveRaw(&packet, sizeof packet, PacketKind::State);
 }
 
 bool Transport::Receive(AttackRequestPacket &packet)
 {
-    return IsOpen() && ReceiveOne(static_cast<SOCKET>(socket_), *reinterpret_cast<const sockaddr_in *>(peer_),
-                                  PacketKind::AttackRequest, packet, received_, dropped_);
+    return ReceiveRaw(&packet, sizeof packet, PacketKind::AttackRequest);
 }
 
 bool Transport::Receive(AttackResultPacket &packet)
 {
-    return IsOpen() && ReceiveOne(static_cast<SOCKET>(socket_), *reinterpret_cast<const sockaddr_in *>(peer_),
-                                  PacketKind::AttackResult, packet, received_, dropped_);
+    return ReceiveRaw(&packet, sizeof packet, PacketKind::AttackResult);
 }
 
 } // namespace coop
+

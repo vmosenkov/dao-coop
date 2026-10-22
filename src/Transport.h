@@ -9,11 +9,16 @@
 // a change to it fail the build). Magic and version are checked on every
 // packet; a datagram from anyone but the configured peer is dropped.
 //
+// Three packet kinds share the socket. A datagram of a kind the caller did not
+// ask for is kept in one pending slot instead of being dropped, so an attack
+// request that arrives between two state packets is not lost.
+//
 // Version 3 (combat arbitration): the single hostile of version 2 became a
 // table of up to four nearby hostiles the host owns, plus the guest's attack
 // intent and the host's answer to it.
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 
 namespace coop
@@ -135,10 +140,9 @@ class Transport
     bool Send(const AttackRequestPacket &packet);
     bool Send(const AttackResultPacket &packet);
 
-    // Takes the next datagram, if one is waiting; false when there is none, it
-    // is from someone other than the peer, or it is not the kind asked for.
-    // Never blocks. A datagram of another kind is dropped (the caller drains
-    // with one call per kind).
+    // Takes the next datagram of the kind asked for, if one is waiting; false
+    // when there is none. Never blocks. A datagram of another kind is kept in
+    // one pending slot until its own Receive call asks for it.
     bool Receive(StatePacket &packet);
     bool Receive(AttackRequestPacket &packet);
     bool Receive(AttackResultPacket &packet);
@@ -153,6 +157,8 @@ class Transport
     const char *PeerAddress() const { return peerText_; }
 
   private:
+    bool ReceiveRaw(void *out, std::size_t outSize, PacketKind expected);
+
     static constexpr std::uintptr_t kNoSocket = ~std::uintptr_t{0};
     std::uintptr_t socket_ = kNoSocket;
     std::uintptr_t peerSize_ = 0; // sockaddr_in size, kept out of the header
@@ -162,7 +168,14 @@ class Transport
     std::uint64_t received_ = 0;
     std::uint64_t dropped_ = 0;
     char peerText_[32] = "127.0.0.1";
+
+    // One datagram of a kind the caller did not ask for, kept for the next
+    // Receive call. It is always one of the fixed packet types.
+    static constexpr std::size_t kMaxPacketSize = sizeof(StatePacket);
+    std::uint8_t pendingData_[kMaxPacketSize] = {};
+    std::size_t pendingSize_ = 0;
+    PacketKind pendingKind_ = PacketKind::State;
+    bool pendingValid_ = false;
 };
 
 } // namespace coop
-

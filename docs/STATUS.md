@@ -155,15 +155,21 @@ Draft pending the owner's review.
 | Release build tested | `tools\join-test.ps1` on the release build: **PASS** — host served slot 91, guest loaded it, 58 positions applied, last distance 0.01 m, same area. |
 | LAN transport | `DAOCOOP_PEERIP`/`HOSTIP` set to this machine's non-loopback address `192.168.56.1`: both instances bound `0.0.0.0` and logged `sending to 192.168.56.1:…`; the join + sync test **PASSED** (host served the save, guest joined, same area). The code path a LAN of two PCs uses is therefore exercised; a second physical PC has not been tried. |
 
+## Round 5 — nearby-hostile table and combat arbitration (verified 2026-10-22)
+
+| Step | Evidence |
+|---|---|
+| Windowed test rig | `tools\windowed.ps1` puts the two named instances into 960×540 windows (`FullScreen=0`); `-Arrange` moves the running copies side by side (0,0 and 960,0). The owner's real profile is untouched. |
+| Nearby hostiles (v3) | `StatePacket` v3 (140 bytes) carries up to four hostiles (`id, position, health, dead flag`). The host collects them with `script::api::GetNearestObjectByHostility` (creatures with max health > 2, within 40 m) and the guest applies position and health. `tools\combat-test.ps1` **PASS**: both sides report the same lowest ogre health 18 (host 172 samples, guest 177), 66 health applications at the guest, id 0x363 on both. The ogre regenerates out of combat, so the test compares the minimum both sides saw, not the final value. |
+| Visible fight | `tools\demo-fight.ps1`: the ogre spawns six metres away and is woken after the handoff save is written (it must stay inactive before that, or the engine refuses to save in combat); both creatures are ordered to attack and DAO resolves every blow. The owner watched the fight in two windows; screenshots showed the ogre being hit and the dog moving. |
+| Combat arbitration | The guest turns its own attack order (`commands::OnStart` on its controlled creature) into an `AttackRequestPacket` (request id, attacker, target). The host validates (known guest, not a repeat, attacker and target exist, target alive, same area, hostile) and runs `dao::orders::Attack` so DAO resolves the blow; an `AttackResultPacket` goes back. `tools\attack-test.ps1` **PASS**: guest sent request 1 (attacker 0x366, target 0x363), the host accepted it, the guest logged `accepted` for the same id. A request that arrives before the host has seen the guest's first state packet is refused as `bad-attacker` and the guest retries the same id (seen in the first run's log). |
+| Known limitations (open) | Animations and damage numbers are computed locally in each game and are not replicated; only position and health agree. When the host dies (or its world stops), the host stops sending state, so the guest keeps playing while its NPCs run in place — there is no pause/death handshake yet. The guest's own local blow still resolves in its own world; the host's health overwrites the result, so the authoritative fight is the host's. |
+
 ## Next actions
 
-1. Real combat arbitration: guest attacks sent to the host and resolved there
-   (the hostile health channel works; damage is still applied by the host
-   plugin in the test). Then effects, loot and death animations.
-2. Area transitions with object-id alignment (`OnAreasBuild`).
-3. A second physical PC over the LAN (code path exercised on one machine via
-   its non-loopback address), then the internet transport (Steam relay).
-4. A minimal player-facing host/join flow beyond the ini file, and the
-   automated suite extended to combat and transition scenarios.
-5. Owner decisions pending: publish the 0.6.0 release artifact; review draft
-   PR cranebeaker/coop-anything#81.
+1. Host pause/death handshake: when the host's world stops (death, loading, pause), tell the guest to freeze instead of leaving it playing.
+2. Attack animation/effect replication on top of the arbitrated blow (the guest currently sees its own local animation).
+3. Area transitions with object-id alignment (`OnAreasBuild`).
+4. A second physical PC over the LAN, then the internet transport (Steam relay).
+5. A minimal player-facing host/join flow beyond the ini file; extend the automated suite to combat and transition scenarios.
+6. Owner decisions pending: publish the 0.6.0 release artifact. (The coop-anything PR cranebeaker/coop-anything#81 was merged on 2026-10-21.)
