@@ -129,6 +129,14 @@ std::uint64_t g_hostileNextFrame = 0;
 std::uint64_t g_hostileApplied = 0;
 float g_hostileDistance = 0.0F;
 
+// A visible demonstration fight: the ogre spawns close, and once both games
+// are in the world its AI is turned back on and both players' creatures are
+// ordered to attack. DAO's own combat code resolves the fight.
+bool g_demoFight = false;
+bool g_demoStarted = false;
+bool g_demoOrdered = false;
+bool g_handoffWritten = false; // the handoff save is on disk
+
 // Reads an environment variable without the deprecated getenv (/W4 /WX at
 // DAOLib's settings treats its warning as an error).
 std::string Environment(const char *name)
@@ -633,7 +641,7 @@ void SelectPartyMember()
 // with the save, and the host's copy is the authority for its health.
 void SpawnHostile()
 {
-    if (!g_combatTest || g_hostileSpawned)
+    if ((!g_combatTest && !g_demoFight) || g_hostileSpawned)
     {
         return;
     }
@@ -654,7 +662,9 @@ void SpawnHostile()
     }
     const dao::Vector position = creature->Position();
     dao::CScriptLocation location{};
-    location.position.x = position.x + 25.0F;
+    // The demonstration fight spawns the ogre in sight; the automated combat
+    // test keeps it far away so no fight starts before the handoff save.
+    location.position.x = position.x + (g_demoFight ? 6.0F : 25.0F);
     location.position.y = position.y;
     location.position.z = position.z;
     location.area = creature->AreaId();
@@ -668,10 +678,10 @@ void SpawnHostile()
         return;
     }
     g_hostileId = hostile;
-    // Keep the spawned ogre out of the fight: the scripts' own AI-off switch
-    // (CREATURE_RULES_FLAG0 bit 8) and inactive, so neither game enters combat
-    // and the host's save is allowed. Its health and position still sync, which
-    // is what milestone 5 is testing.
+    // The ogre is created inactive and with the scripts' AI-off switch so that
+    // neither game enters combat before the handoff save is written (the
+    // engine refuses saves in combat). The demonstration fight turns it back on
+    // afterwards. It stays active=false so the save carries it without a fight.
     dao::script::api::SetLocalInt(hostile, L"CREATURE_RULES_FLAG0", 8);
     dao::script::api::SetObjectActive(hostile, 0);
     spdlog::info("combat: hostile spawned 0x{:08x} from ogre_default.utc (AI off, inactive)", hostile);
@@ -683,7 +693,7 @@ void SpawnHostile()
 // being tested.
 void DamageHostileTick()
 {
-    if (!g_combatTest || g_hostileId == dao::kInvalidObject || g_hostileTicks >= 14)
+    if (!g_combatTest || g_demoFight || g_hostileId == dao::kInvalidObject || g_hostileTicks >= 14)
     {
         return;
     }
@@ -714,6 +724,155 @@ void DamageHostileTick()
     ++g_hostileTicks;
     g_hostileNextFrame = frame + 120;
     spdlog::info("combat: hostile 0x{:08x} health {:.1f} -> {:.1f}", g_hostileId, *health, next);
+}
+
+// The host side of the hostile table: the hostiles around the player as the
+// host's game sees them. Bounded by count and radius; a creature the lookup no
+// longer answers is simply absent from the table (the guest then leaves it
+// alone rather than guessing it died).
+constexpr float kHostileRadius = 40.0F;
+
+struct NearbyHostile
+{
+    dao::ObjectId id = dao::kInvalidObject;
+    dao::Vector position{};
+    float health = 0.0F;
+    bool dead = false;
+};
+
+int CollectNearbyHostiles(dao::CClientExoApp *app, dao::ObjectId player, NearbyHostile out[coop::kMaxHostiles])
+{
+    const dao::script::Array found = dao::script::api::GetNearestObjectByHostility(
+        player, 1, dao::script::constants::OBJECT_TYPE_CREATURE, 8, 0, 0, 0);
+    const dao::CCObject *self = app->GetObjectById(player);
+    if (self == nullptr)
+    {
+        return 0;
+    }
+    const dao::Vector center = self->Position();
+    int count = 0;
+    for (std::size_t i = 0; i < found.Size() && count < static_cast<int>(coop::kMaxHostiles); ++i)
+    {
+        const dao::ObjectId id = found.Object(i);
+        if (id == dao::kInvalidObject || id == player)
+        {
+            continue;
+        }
+        const dao::CCCreature *creature = app->GetCreatureById(id);
+        if (creature == nullptr)
+        {
+            continue;
+        }
+        // Rats and other one-hit props are hostile too; they are not worth a
+        // packet slot next to a real enemy.
+        if (creature->MaxHealth().value_or(0.0F) <= 2.0F)
+        {
+            continue;
+        }
+        const dao::Vector position = creature->Position();
+        const float dx = position.x - center.x;
+        const float dy = position.y - center.y;
+        const float dz = position.z - center.z;
+        if (std::sqrt((dx * dx) + (dy * dy) + (dz * dz)) > kHostileRadius)
+        {
+            continue;
+        }
+        out[count].id = id;
+        out[count].position = position;
+        out[count].health = creature->Health().value_or(0.0F);
+        out[count].dead = dao::script::api::IsDead(id) != 0;
+        ++count;
+    }
+    return count;
+}
+
+// Demonstration only: make the party survive long enough to watch the fight
+// (the prologue Warden has 140 HP, an ogre has 220, and the Warden dies in a
+// couple of minutes otherwise). DAO still resolves every blow.
+void BuffPartyForDemo()
+{
+    dao::CClientExoApp *app = dao::CClientExoApp::Get();
+    if (app == nullptr)
+    {
+        return;
+    }
+    const dao::script::Array party = dao::script::api::GetPartyList(dao::kInvalidObject);
+    for (std::size_t i = 0; i < party.Size(); ++i)
+    {
+        const dao::ObjectId id = party.Object(i);
+        if (id == dao::kInvalidObject)
+        {
+            continue;
+        }
+        if (const dao::CCCreature *creature = app->GetCreatureById(id))
+        {
+            creature->SetProperty(dao::script::constants::PROPERTY_DEPLETABLE_HEALTH, 5000.0F,
+                                  dao::script::PropertyValue::Base);
+            creature->SetProperty(dao::script::constants::PROPERTY_DEPLETABLE_HEALTH, 5000.0F,
+                                  dao::script::PropertyValue::Current);
+        }
+    }
+    spdlog::info("demo: party health raised for the demonstration");
+}
+
+void DemoFightTick()
+{
+    if (!g_demoFight || !InWorld())
+    {
+        return;
+    }
+    dao::CClientExoApp *app = dao::CClientExoApp::Get();
+    if (app == nullptr)
+    {
+        return;
+    }
+    if (g_role == Role::Host && g_handoff && g_handoffWritten && !g_demoStarted && g_hostileId != dao::kInvalidObject)
+    {
+        // The save is on disk, so a fight may start now: wake the ogre, turn
+        // its AI back on and order the host's creature to attack it.
+        g_demoStarted = true;
+        BuffPartyForDemo();
+        dao::script::api::SetObjectActive(g_hostileId, 1);
+        dao::script::api::SetLocalInt(g_hostileId, L"CREATURE_RULES_FLAG0", 0);
+        // A demonstration opponent that lives long enough to be watched while
+        // the party, raised to 5000 HP, keeps hitting it.
+        if (const dao::CCCreature *ogre = app->GetCreatureById(g_hostileId))
+        {
+            ogre->SetProperty(dao::script::constants::PROPERTY_DEPLETABLE_HEALTH, 1500.0F,
+                              dao::script::PropertyValue::Base);
+            ogre->SetProperty(dao::script::constants::PROPERTY_DEPLETABLE_HEALTH, 1500.0F,
+                              dao::script::PropertyValue::Current);
+        }
+        const bool ordered = dao::orders::Attack(dao::party::Controlled(), g_hostileId);
+        spdlog::info("demo: fight started at 0x{:08x} (active, AI on, attack order {})", g_hostileId, ordered);
+        return;
+    }
+    if (g_role == Role::Guest && !g_demoOrdered && g_haveRemote && g_remote.hostileCount > 0)
+    {
+        // Prefer the real enemy over any one-hit prop that slipped in.
+        const coop::HostileEntry *chosen = nullptr;
+        for (std::uint32_t i = 0; i < g_remote.hostileCount && i < coop::kMaxHostiles; ++i)
+        {
+            const coop::HostileEntry &entry = g_remote.hostiles[i];
+            if (entry.id != dao::kInvalidObject && entry.health > 10.0F &&
+                app->GetCreatureById(entry.id) != nullptr)
+            {
+                chosen = &entry;
+                break;
+            }
+        }
+        if (chosen != nullptr)
+        {
+            // The guest's copy of the ogre was saved inactive with its AI off;
+            // wake it so the demonstration fight is visible on both screens.
+            BuffPartyForDemo();
+            dao::script::api::SetObjectActive(chosen->id, 1);
+            dao::script::api::SetLocalInt(chosen->id, L"CREATURE_RULES_FLAG0", 0);
+            const bool ordered = dao::orders::Attack(dao::party::Controlled(), chosen->id);
+            g_demoOrdered = ordered;
+            spdlog::info("demo: guest woke 0x{:08x} and ordered its creature to attack it ({})", chosen->id, ordered);
+        }
+    }
 }
 
 // Milestone 2: one frame's worth of co-op.
@@ -750,17 +909,19 @@ void NetFrame()
         coop::StatePacket packet{};
         if (LocalState(packet))
         {
-            if (g_role == Role::Host && g_hostileId != dao::kInvalidObject)
+            if (g_role == Role::Host)
             {
-                const dao::CCCreature *hostile = app->GetCreatureById(g_hostileId);
-                if (hostile != nullptr)
+                NearbyHostile found[coop::kMaxHostiles];
+                const int count = CollectNearbyHostiles(app, controlled, found);
+                packet.hostileCount = static_cast<std::uint8_t>(count);
+                for (int i = 0; i < count; ++i)
                 {
-                    const dao::Vector hostilePosition = hostile->Position();
-                    packet.hostileId = g_hostileId;
-                    packet.hostileX = hostilePosition.x;
-                    packet.hostileY = hostilePosition.y;
-                    packet.hostileZ = hostilePosition.z;
-                    packet.hostileHealth = hostile->Health().value_or(0.0F);
+                    packet.hostiles[i].id = found[i].id;
+                    packet.hostiles[i].x = found[i].position.x;
+                    packet.hostiles[i].y = found[i].position.y;
+                    packet.hostiles[i].z = found[i].position.z;
+                    packet.hostiles[i].health = found[i].health;
+                    packet.hostiles[i].flags = found[i].dead ? coop::kHostileDead : 0;
                 }
             }
             g_net.Send(packet);
@@ -831,34 +992,50 @@ void NetFrame()
         }
     }
 
-    // Guest: mirror the host's hostile creature (health and position). The
-    // host is the authority for it; the guest's game displays the result.
-    if (g_role == Role::Guest && g_haveRemote && g_remote.hostileId != dao::kInvalidObject)
+    // Guest: mirror the host's nearby-hostile table (position and health). The
+    // host is the authority; a creature the table does not name is left alone.
+    if (g_role == Role::Guest && g_haveRemote && g_remote.areaId == local->AreaId())
     {
-        const dao::CCCreature *hostile = app->GetCreatureById(g_remote.hostileId);
-        if (hostile != nullptr)
+        int appliedHere = 0;
+        for (std::uint32_t i = 0; i < g_remote.hostileCount && i < coop::kMaxHostiles; ++i)
         {
-            const dao::Vector hostilePosition = hostile->Position();
-            const float hx = g_remote.hostileX - hostilePosition.x;
-            const float hy = g_remote.hostileY - hostilePosition.y;
-            const float hz = g_remote.hostileZ - hostilePosition.z;
-            const float hostileDistance = std::sqrt((hx * hx) + (hy * hy) + (hz * hz));
-            g_hostileDistance = hostileDistance;
-            if (hostileDistance > kApplyTolerance)
+            const coop::HostileEntry &entry = g_remote.hostiles[i];
+            if (entry.id == dao::kInvalidObject)
+            {
+                continue;
+            }
+            const dao::CCCreature *hostile = app->GetCreatureById(entry.id);
+            if (hostile == nullptr)
+            {
+                continue;
+            }
+            const dao::Vector position = hostile->Position();
+            const float hx = entry.x - position.x;
+            const float hy = entry.y - position.y;
+            const float hz = entry.z - position.z;
+            const float distance = std::sqrt((hx * hx) + (hy * hy) + (hz * hz));
+            g_hostileDistance = distance;
+            if (distance > kApplyTolerance)
             {
                 dao::Vector target{};
-                target.x = g_remote.hostileX;
-                target.y = g_remote.hostileY;
-                target.z = g_remote.hostileZ;
-                dao::script::api::SetPosition(g_remote.hostileId, target);
+                target.x = entry.x;
+                target.y = entry.y;
+                target.z = entry.z;
+                dao::script::api::SetPosition(entry.id, target);
             }
             const std::optional<float> localHealth = hostile->Health();
-            if (localHealth && std::fabs(*localHealth - g_remote.hostileHealth) > 1.0F)
+            if (localHealth && std::fabs(*localHealth - entry.health) > 1.0F)
             {
-                hostile->SetProperty(dao::script::constants::PROPERTY_DEPLETABLE_HEALTH, g_remote.hostileHealth,
+                hostile->SetProperty(dao::script::constants::PROPERTY_DEPLETABLE_HEALTH, entry.health,
                                      dao::script::PropertyValue::Current);
                 ++g_hostileApplied;
+                ++appliedHere;
             }
+        }
+        if (appliedHere > 0)
+        {
+            spdlog::info("hostile-table: applied health to {} of {} mirrored entries", appliedHere,
+                         g_remote.hostileCount);
         }
     }
 
@@ -889,25 +1066,27 @@ void NetFrame()
             const float distance = std::sqrt((dx * dx) + (dy * dy) + (dz * dz));
             float localHostileHealth = 0.0F;
             dao::ObjectId localHostile = dao::kInvalidObject;
-            if (g_hostileId != dao::kInvalidObject)
+            if (g_role == Role::Host)
             {
-                if (const dao::CCCreature *hostile = app->GetCreatureById(g_hostileId))
+                NearbyHostile found[coop::kMaxHostiles];
+                if (CollectNearbyHostiles(app, controlled, found) > 0)
                 {
-                    localHostile = g_hostileId;
-                    localHostileHealth = hostile->Health().value_or(0.0F);
+                    localHostile = found[0].id;
+                    localHostileHealth = found[0].health;
                 }
             }
             std::snprintf(line, sizeof line,
                           "net role=%s local=0x%08x remote=0x%08x puppet=0x%08x local (%.2f, %.2f, %.2f) area 0x%08x "
                           "remote (%.2f, %.2f, %.2f) area 0x%08x distance %.2f applied %llu puppet_applied %llu "
-                          "puppet_distance %.2f hostile=0x%08x hostile_health %.1f local_hostile=0x%08x "
+                          "puppet_distance %.2f hostiles %u hostile0=0x%08x hostile0_health %.1f local_hostile=0x%08x "
                           "local_hostile_health %.1f hostile_applied %llu hostile_distance %.2f sent %llu recv %llu "
                           "dropped %llu",
                           g_role == Role::Host ? "host" : "guest", controlled, g_remote.objectId, g_puppetId,
                           localPosition.x, localPosition.y, localPosition.z, local->AreaId(), g_remote.x, g_remote.y,
                           g_remote.z, g_remote.areaId, distance, static_cast<unsigned long long>(g_applied),
-                          static_cast<unsigned long long>(g_puppetApplied), g_puppetDistance, g_remote.hostileId,
-                          g_remote.hostileHealth, localHostile, localHostileHealth,
+                          static_cast<unsigned long long>(g_puppetApplied), g_puppetDistance,
+                          static_cast<unsigned>(g_remote.hostileCount), g_remote.hostiles[0].id,
+                          g_remote.hostiles[0].health, localHostile, localHostileHealth,
                           static_cast<unsigned long long>(g_hostileApplied), g_hostileDistance,
                           static_cast<unsigned long long>(g_net.Sent()), static_cast<unsigned long long>(g_net.Received()),
                           static_cast<unsigned long long>(g_net.Dropped()));
@@ -952,6 +1131,7 @@ void Frame()
         {
             AddCompanion();
             SelectPartyMember();
+            DemoFightTick();
             DamageHostileTick();
         }
     }
@@ -968,15 +1148,15 @@ void Frame()
         {
             g_handoffWorldFrame = frame;
         }
-        if (frame - g_handoffWorldFrame > kHandoffDelayFrames && frame % 60 == 0)
+        const std::uint64_t handoffDelay = g_demoFight ? 120 : kHandoffDelayFrames;
+        if (frame - g_handoffWorldFrame > handoffDelay && frame % 60 == 0)
         {
             if (dao::saves::Save(dao::saves::Kind::Manual, kHandoffSlot, L"coop-handoff"))
             {
                 g_handoffRequested = true;
                 spdlog::info("handoff: save requested for the guest (slot {})", kHandoffSlot);
             }
-        }
-    }
+        }    }
 
     // Milestone 3 guest: receive the host's slot, write it into this profile,
     // then load it.
@@ -1088,6 +1268,11 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
     {
         spdlog::info("combat on: the host spawns a hostile before the handoff save and keeps its health in sync");
     }
+    g_demoFight = Flag("demo_fight", "DAOCOOP_DEMO_FIGHT");
+    if (g_demoFight)
+    {
+        spdlog::info("demo fight on: the ogre spawns in sight and both creatures are ordered to attack it");
+    }
     dao::party::OnControlChanged([](dao::ObjectId before, dao::ObjectId now) {
         spdlog::info("control: 0x{:08x} -> 0x{:08x}", before, now);
     });
@@ -1114,6 +1299,7 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
             saved.number == kHandoffSlot)
         {
             g_handoffSent = true;
+            g_handoffWritten = true;
             spdlog::info("handoff: slot {} written; serving its folder", saved.number);
             StartHandoffSend(saved.Folder());
         }
@@ -1132,3 +1318,5 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
     dao::OnFrame(&Frame);
     return true;
 }
+
+

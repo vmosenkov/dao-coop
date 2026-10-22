@@ -1,16 +1,17 @@
-// The co-op transport: one UDP socket per game process. Loopback for the
-// two-instance rig, any interface for a LAN session (set the peer address).
-// It is deliberately small and boring: a fixed-size state packet, no
-// reliability (state is resent 20 times a second and only the latest one
-// matters), and a non-blocking receive that the plugin drains from its frame
-// callback.
+// The co-op transport: one UDP socket per game process, bound to any
+// interface (loopback for the two-instance rig, a LAN address for two PCs).
+// It is deliberately small and boring: fixed-size packets, no reliability
+// (state is resent 20 times a second and only the latest one matters), and a
+// non-blocking receive that the plugin drains from its frame callback.
 //
-// Wire format: little-endian fields in a packed struct. Magic and version are
-// checked on every packet; a different build is ignored rather than guessed
-// at.
+// Wire format: little-endian fields in native structs (all members are 4-byte
+// or smaller, so the layout is the same everywhere and the static_asserts make
+// a change to it fail the build). Magic and version are checked on every
+// packet; a datagram from anyone but the configured peer is dropped.
 //
-// Version 2 (milestone 5) adds the hostile creature the host keeps in sync:
-// its id, position and current health.
+// Version 3 (combat arbitration): the single hostile of version 2 became a
+// table of up to four nearby hostiles the host owns, plus the guest's attack
+// intent and the host's answer to it.
 #pragma once
 
 #include <cstdint>
@@ -21,14 +22,35 @@ namespace coop
 // 'DCOC' in little-endian, so a wrong port or an unrelated datagram is cheap
 // to reject.
 inline constexpr std::uint32_t kMagic = 0x434F4344;
-inline constexpr std::uint16_t kVersion = 2;
+inline constexpr std::uint16_t kVersion = 3;
+
+// How many nearby hostiles the host mirrors.
+inline constexpr std::uint32_t kMaxHostiles = 4;
 
 enum class PacketKind : std::uint8_t
 {
     State = 1,
+    // A guest's attack intent; the host validates and executes it.
+    AttackRequest = 2,
+    // The host's answer to an AttackRequest; the outcome arrives as state.
+    AttackResult = 3,
 };
 
-// One player's creature, as its own game sees it, plus the hostile the host
+// One hostile creature as the host sees it.
+struct HostileEntry
+{
+    std::uint32_t id = 0xFFFFFFFF;
+    float x = 0.0F;
+    float y = 0.0F;
+    float z = 0.0F;
+    float health = 0.0F;
+    std::uint32_t flags = 0; // HostileFlag::kHostileDead, else 0
+};
+static_assert(sizeof(HostileEntry) == 24, "the packet is its own wire format");
+
+inline constexpr std::uint32_t kHostileDead = 1U << 0;
+
+// One player's creature, as its own game sees it, plus the hostiles the host
 // mirrors. The id is the engine's object id; both games name the same creature
 // when they load the same save.
 struct StatePacket
@@ -45,14 +67,52 @@ struct StatePacket
     float z = 0.0F;
     float health = 0.0F;
     std::uint32_t sentMs = 0;
-    // The hostile being mirrored (host-authoritative), or kNoHostile.
-    std::uint32_t hostileId = 0xFFFFFFFF;
-    float hostileX = 0.0F;
-    float hostileY = 0.0F;
-    float hostileZ = 0.0F;
-    float hostileHealth = 0.0F;
+    std::uint8_t hostileCount = 0; // 0..kMaxHostiles
+    std::uint8_t reserved[3] = {};
+    HostileEntry hostiles[kMaxHostiles] = {};
 };
-static_assert(sizeof(StatePacket) == 60, "the packet is its own wire format; keep it fixed");
+static_assert(sizeof(StatePacket) == 140, "the packet is its own wire format; keep it fixed");
+
+// A guest's request that the host execute an attack for the guest's creature.
+// The guest sends an intent, never a result: the host resolves the fight with
+// the game's own combat code.
+struct AttackRequestPacket
+{
+    std::uint32_t magic = kMagic;
+    std::uint16_t version = kVersion;
+    PacketKind kind = PacketKind::AttackRequest;
+    std::uint8_t flags = 0;
+    std::uint32_t requestId = 0; // the guest's monotonically increasing id
+    std::uint32_t attacker = 0;  // the guest's controlled creature
+    std::uint32_t target = 0;    // the creature the guest wants to attack
+};
+static_assert(sizeof(AttackRequestPacket) == 20, "the packet is its own wire format");
+
+// The host's answer: what happened to the request. Accepted only means the
+// order was queued; the outcome arrives as hostile state.
+struct AttackResultPacket
+{
+    std::uint32_t magic = kMagic;
+    std::uint16_t version = kVersion;
+    PacketKind kind = PacketKind::AttackResult;
+    std::uint8_t flags = 0; // the AttackResult value
+    std::uint32_t requestId = 0;
+    std::uint32_t attacker = 0;
+    std::uint32_t target = 0;
+};
+static_assert(sizeof(AttackResultPacket) == 20, "the packet is its own wire format");
+
+// Why the host did or did not queue the attack.
+enum class AttackResult : std::uint8_t
+{
+    Accepted = 0,
+    StaleRequest = 1,
+    BadAttacker = 2,
+    BadTarget = 3,
+    NotHostile = 4,
+    WrongArea = 5,
+    OrderRefused = 6,
+};
 
 class Transport
 {
@@ -72,10 +132,16 @@ class Transport
 
     // Sends one packet to the peer; false if the send failed.
     bool Send(const StatePacket &packet);
+    bool Send(const AttackRequestPacket &packet);
+    bool Send(const AttackResultPacket &packet);
 
-    // Takes the next datagram, if one is waiting; false when there is none or
-    // it is not one of ours. Never blocks.
+    // Takes the next datagram, if one is waiting; false when there is none, it
+    // is from someone other than the peer, or it is not the kind asked for.
+    // Never blocks. A datagram of another kind is dropped (the caller drains
+    // with one call per kind).
     bool Receive(StatePacket &packet);
+    bool Receive(AttackRequestPacket &packet);
+    bool Receive(AttackResultPacket &packet);
 
     std::uint64_t Sent() const { return sent_; }
     std::uint64_t Received() const { return received_; }
@@ -99,3 +165,4 @@ class Transport
 };
 
 } // namespace coop
+

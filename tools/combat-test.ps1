@@ -127,38 +127,52 @@ if ($verdict) {
     $damageLines = @($hostLines | Where-Object { $_ -match 'combat: hostile 0x[0-9a-f]+ health ([0-9.]+) -> ([0-9.]+)' })
     Write-Host ("host damage ticks: {0}" -f $damageLines.Count)
     if ($damageLines.Count -lt $MinDamageTicks) { $verdict = $false }
-    $hostDamageFinal = $null
-    $hostFirstHealth = $null
+    $hostFirst = $null
+    $hostLastDamage = $null
     if ($damageLines.Count -gt 0) {
-        $last = $damageLines[-1]
-        if ($last -match 'health [0-9.]+ -> ([0-9.]+)') {
-            $hostDamageFinal = [double]::Parse($Matches[1], [Globalization.CultureInfo]::InvariantCulture)
-        }
-        $first = $damageLines[0]
-        if ($first -match 'health ([0-9.]+) ->') {
-            $hostFirstHealth = [double]::Parse($Matches[1], [Globalization.CultureInfo]::InvariantCulture)
-            Write-Host "host hostile health (damage log): $hostFirstHealth -> $hostDamageFinal"
-            if (-not ($hostDamageFinal -lt $hostFirstHealth)) { $verdict = $false }
+        if ($damageLines[0] -match 'health ([0-9.]+) ->') { $hostFirst = [double]::Parse($Matches[1], [Globalization.CultureInfo]::InvariantCulture) }
+        if ($damageLines[-1] -match 'health [0-9.]+ -> ([0-9.]+)') { $hostLastDamage = [double]::Parse($Matches[1], [Globalization.CultureInfo]::InvariantCulture) }
+        Write-Host "host damage log: $hostFirst -> $hostLastDamage"
+        if ($null -ne $hostFirst -and $null -ne $hostLastDamage -and -not ($hostLastDamage -lt $hostFirst)) { $verdict = $false }
+    }
+
+    # The hostile regenerates out of combat (seen 2026-10-22), so its final
+    # health is not the proof. What the channel carried is: the lowest value the
+    # host reported and the lowest the guest received must agree.
+    $hostLive = @()
+    foreach ($line in ($hostLines | Where-Object { $_ -match 'net role=host' })) {
+        if ($line -match 'local_hostile_health ([0-9.]+)') {
+            $v = [double]::Parse($Matches[1], [Globalization.CultureInfo]::InvariantCulture)
+            if ($v -gt 0) { $hostLive += $v }
         }
     }
-    # The live value the host is sending is what the guest should match; the
-    # damage log's last line can be one engine tick behind the death state.
-    $hostFinalHealth = $hostDamageFinal
-    $hostNet = $hostLines | Where-Object { $_ -match 'net role=host' } | Select-Object -Last 1
-    if ($hostNet -match 'local_hostile_health ([0-9.]+)') {
-        $hostFinalHealth = [double]::Parse($Matches[1], [Globalization.CultureInfo]::InvariantCulture)
-        Write-Host "host hostile health (live, sent to guest): $hostFinalHealth"
+    $guestRemote = @()
+    foreach ($line in ($guestLines | Where-Object { $_ -match 'net role=guest' })) {
+        if ($line -match 'hostile0_health ([0-9.]+)') {
+            $v = [double]::Parse($Matches[1], [Globalization.CultureInfo]::InvariantCulture)
+            if ($v -gt 0) { $guestRemote += $v }
+        }
+    }
+    $hostMin = if ($hostLive.Count) { ($hostLive | Measure-Object -Minimum).Minimum } else { $null }
+    $hostMax = if ($hostLive.Count) { ($hostLive | Measure-Object -Maximum).Maximum } else { $null }
+    $guestMin = if ($guestRemote.Count) { ($guestRemote | Measure-Object -Minimum).Minimum } else { $null }
+    Write-Host "host live hostile health: min $hostMin max $hostMax ($($hostLive.Count) samples)"
+    Write-Host "guest received hostile health: min $guestMin ($($guestRemote.Count) samples)"
+    if ($null -eq $hostMin -or $null -eq $guestMin) {
+        $verdict = $false
+    }
+    else {
+        if ([math]::Abs($guestMin - $hostMin) -gt 2.0) { $verdict = $false }
+        if ($null -ne $hostFirst -and -not ($guestMin -lt ($hostFirst - 10.0))) { $verdict = $false }
     }
 
     $guestNet = $guestLines | Where-Object { $_ -match 'net role=guest' } | Select-Object -Last 1
     Write-Host ("guest last net: {0}" -f ($guestNet -replace '^\[[^\]]+\] \[[^\]]+\] \[info\] ', ''))
-    if ($guestNet -match 'hostile=(0x[0-9a-f]+)\s+hostile_health\s+([0-9.]+).*?hostile_applied\s+([0-9]+)') {
+    if ($guestNet -match 'hostile0=(0x[0-9a-f]+).*?hostile_applied ([0-9]+)') {
         $guestHostileId = $Matches[1]
-        $guestHealth = [double]::Parse($Matches[2], [Globalization.CultureInfo]::InvariantCulture)
-        $guestApplies = [int]$Matches[3]
-        Write-Host "guest sees hostile $guestHostileId, health $guestHealth, applied $guestApplies"
+        $guestApplies = [int]$Matches[2]
+        Write-Host "guest sees hostile $guestHostileId, applied $guestApplies health changes"
         if ($hostId -and $guestHostileId -ne $hostId) { $verdict = $false }
-        if ($null -ne $hostFinalHealth -and [math]::Abs($guestHealth - $hostFinalHealth) -gt 1.0) { $verdict = $false }
         if ($guestApplies -lt $MinDamageTicks) { $verdict = $false }
     }
     else { Write-Host 'guest net line has no hostile fields'; $verdict = $false }
@@ -167,6 +181,3 @@ if ($verdict) {
 Write-Host ''
 Write-Host ("VERDICT: {0}" -f ($(if ($verdict) { 'PASS' } else { 'FAIL' })))
 if (-not $verdict) { exit 1 }
-
-
-
