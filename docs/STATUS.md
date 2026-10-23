@@ -297,10 +297,17 @@ Draft pending the owner's review.
 | Root cause | The guest's mirror had a branch for `remote creature == the guest's own creature` that teleported the guest's creature to the host's position on every state packet. That branch runs when both games control the same Warden — the guest did not take a party member of its own (`select_party = 0`, or a build before the guest's automatic party pick). It is the "teleported back when walking away" the owner reported. |
 | Fix | The branch no longer moves anything: the guest's own creature is left alone and the plugin writes one System event: "Both players control the same creature; the guest should select another party member". The normal two-creature path is untouched. |
 | Tests | New `tools\same-avatar-test.ps1` (host + guest join; the guest explicitly takes index 0, i.e. the host's Warden; both drive): **PASS** — `local == remote` (the bug configuration), the guest's `applied` is **0** (its position is never rewritten), it walks away (furthest distance over the threshold) and the warning is logged. `independence-test` (two creatures) still **PASS**. |
+## Round 25 — the players walk apart (2026-10-23)
+
+| Item | Evidence |
+|---|---|
+| Direct scenario | New test hook `DAOCOOP_DRIVE_AWAY=1`: the host walks one way and the guest the other at the same time (`tools\apart-test.ps1`). **PASS**: both sides' `applied` is **0** (neither mirrored creature rewrites its own controlled creature), the distance between them grows (0.05 m -> 1.81 m; the Fort Drakon room's walls stop the walk at ~2 m), and each game's copy follows its owner (puppet distances 0.45 / 0.87 m). Before the fix the guest's `applied` grew and the distance stayed near zero. |
+| Same creature | `tools\same-avatar-test.ps1` **PASS** (the guest explicitly takes the host's Warden): the guest's position is never rewritten, it walks away, and the warning is logged. |
+| Normal case | `independence-test` **PASS** (different creatures). |
+| Tests on the release | All three also run on the 0.7.8 release build. |
 ## Next actions
 
-1. Rebuild the release package with this fix and re-run same-avatar-test and independence-test on it.
-2. Owner: update both PCs to the new release; the guest should use select_party = 1 (the installer writes it), otherwise the new warning explains the same-creature case.
-3. Event Log scrolling; area transitions; host/join menu; internet transport; effects/loot sync.
-4. Review and merge PR #141 in coop-anything.
+1. Owner: update to 0.7.8 and play; the guest uses `select_party = 1` (the installer writes it).
+2. Event Log scrolling; area transitions; host/join menu; internet transport; effects/loot sync.
+3. Review and merge PR #141 in coop-anything.
 

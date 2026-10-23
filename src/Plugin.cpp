@@ -88,6 +88,7 @@ bool g_autoLoad = false;
 bool g_loadRequested = false;
 Role g_role = Role::None;
 bool g_drive = false;
+bool g_driveAway = false; // test: host and guest walk in opposite directions
 coop::Transport g_net;
 std::uint16_t g_hostPort = 45830;
 std::uint16_t g_guestPort = 45831;
@@ -1884,11 +1885,23 @@ void NetFrame()
     // the guest once it has selected its own party member).
     if (g_drive && dao::FrameCount() % kFramesBetweenMoves == 0)
     {
-        const float angle = static_cast<float>(dao::FrameCount() / kFramesBetweenMoves) * 1.1F;
         dao::Vector target{};
-        target.x = g_anchor.x + (std::cos(angle) * kDriveRadius);
-        target.y = g_anchor.y + (std::sin(angle) * kDriveRadius);
-        target.z = g_anchor.z;
+        if (g_driveAway)
+        {
+            // Test hook: the host walks one way, the guest the other, so the two
+            // avatars must part instead of staying together.
+            const float direction = g_role == Role::Host ? -1.0F : 1.0F;
+            target.x = g_anchor.x + direction * kDriveRadius;
+            target.y = g_anchor.y;
+            target.z = g_anchor.z;
+        }
+        else
+        {
+            const float angle = static_cast<float>(dao::FrameCount() / kFramesBetweenMoves) * 1.1F;
+            target.x = g_anchor.x + (std::cos(angle) * kDriveRadius);
+            target.y = g_anchor.y + (std::sin(angle) * kDriveRadius);
+            target.z = g_anchor.z;
+        }
         if (dao::orders::MoveTo(controlled, target))
         {
             spdlog::info("drive: move ordered to ({:.2f}, {:.2f}, {:.2f})", target.x, target.y, target.z);
@@ -2147,6 +2160,7 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
         g_role = Role::Guest;
     }
     g_drive = Flag("drive", "DAOCOOP_DRIVE");
+    g_driveAway = Flag("drive_away", "DAOCOOP_DRIVE_AWAY");
     g_hostPort = PortSetting("host_port", "DAOCOOP_HOST_PORT", 45830);
     g_guestPort = PortSetting("guest_port", "DAOCOOP_GUEST_PORT", 45831);
     const std::string peerSetting = Setting("peer", "DAOCOOP_PEERIP");
@@ -2446,6 +2460,7 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
     dao::OnFrame(&Frame);
     return true;
 }
+
 
 
 
