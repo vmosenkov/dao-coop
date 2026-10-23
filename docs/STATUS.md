@@ -264,11 +264,17 @@ Draft pending the owner's review.
 | Combat log spam | "Combat ended" is now written only after five seconds without a living hostile (a 150-frame hysteresis), so a hostile that steps out of sight for a moment no longer produces a started/ended pair every couple of seconds. One fight = one pair of lines. |
 | Suite | `tools\run-suite.ps1` (one process per test, so the Win32 `Add-Type` declarations do not collide) ran: `independence-test`, `walk-test`, `attack-test`, `death-test`, `reload-test`, `ui-menu-test` **PASS**; `ui-shot` passed in substance but printed no verdict — it now prints `VERDICT: PASS` when the screen was shown and the screenshot exists. |
 | Still known | The artificial-ogre `combat-test` does not pass on the Fort Drakon save (an inactive `CreateObject` ogre is not returned by the hostility query there); the real fight path is covered by `attack-test`, `walk-test` and `demo-fight`. |
+## Round 20 — the copy swings when the other player attacks (2026-10-23)
+
+| Item | Evidence |
+|---|---|
+| Attack animation on the copy | The host's combat lines travel to the guest in the event packet; when a line starts with the mirrored creature's name and " attacks", the guest plays DAO's own attack animation on its copy with a queued `CommandPlayAnimation` (`dao/animation::kAttack`, script command 569) placed ahead of the copy's walk order, so the swing shows and the walk continues. Verified in `tools\demo-fight.ps1`: the guest log has `puppet: attack animation for Айдан` (8 times in a 35 s fight) while the copy keeps moving (`puppet_distance` 0.19 m, `puppet_walks` still growing). Done on the guest only: the host's copy of the guest really attacks through the arbitration order and must not be interrupted. |
+| Regression | `independence-test` and `attack-test` **PASS** with the change. |
 ## Next actions
 
-1. Rebuild the release package with this round's hysteresis change and the ui-shot verdict.
-2. Owner playtest: two characters on one PC, then two PCs on the LAN; report what still differs visually.
-3. Event Log UX: scrolling history and event details; verify filter tabs by hand.
-4. Combat animations/effects replication; area transitions; host/join menu; internet transport.
+1. Rebuild the release package with the copy's attack animation and re-run the suite on it.
+2. Owner playtest: a real fight on both screens; check the copy's swings and the shared log.
+3. Event Log UX: scrolling (the GFx clip buttons did not render; try text-field clicks or building the controls in the SWF shell); event details.
+4. Area transitions; host/join menu; internet transport; animations of effects.
 5. Review and undraft PR #141 in coop-anything.
 

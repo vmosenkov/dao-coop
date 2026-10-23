@@ -30,6 +30,7 @@
 
 #include <Windows.h>
 
+#include "dao/Animation.h"
 #include "dao/ClientExoApp.h"
 #include "dao/CommandEvents.h"
 #include "dao/Frame.h"
@@ -1558,6 +1559,25 @@ void NetFrame()
             const auto category = static_cast<coop::EventCategory>(event.category);
             coop::EventLog::Get().Add(category, text);
             spdlog::info("event(remote): [{}] {}", coop::EventCategoryName(category), text);
+            // The other player's creature swings in their own game; play the
+            // same swing on this game's copy of it, so the two screens show the
+            // attack. The combat line names the creature that attacked.
+            if (g_role == Role::Guest && category == coop::EventCategory::Combat &&
+                g_remote.objectId != dao::kInvalidObject)
+            {
+                const std::string puppetName = CreatureName(g_remote.objectId);
+                if (!puppetName.empty() && text.rfind(puppetName + " attacks", 0) == 0)
+                {
+                    // Ahead of the copy's queued walk order: the swing plays now
+                    // and the walk continues after it.
+                    dao::script::OwnedCommand swing =
+                        dao::script::api::CommandPlayAnimation(dao::animation::kAttack);
+                    if (swing && dao::script::api::AddCommand(g_remote.objectId, *swing.get(), 1, 0) >= 0)
+                    {
+                        spdlog::info("puppet: attack animation for {}", puppetName);
+                    }
+                }
+            }
             break;
         }
         default:
@@ -2378,6 +2398,9 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
     dao::OnFrame(&Frame);
     return true;
 }
+
+
+
 
 
 
