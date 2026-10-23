@@ -2167,6 +2167,13 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
             g_role = Role::None;
         }
     }
+    if (g_role == Role::Guest && !g_join)
+    {
+        // A guest role with join off is a common misconfiguration: the game
+        // loads its own save and the two players never share a world.
+        Notify(coop::EventCategory::System,
+               "Guest role without join=1: this game loads its own save; set join = 1 to join the host");
+    }
     spdlog::info("drive {}", g_drive ? "on" : "off");
 
     g_addCompanion = g_role == Role::Host && Flag("add_companion", "DAOCOOP_ADD_COMPANION");
