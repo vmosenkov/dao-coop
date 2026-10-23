@@ -312,10 +312,17 @@ Draft pending the owner's review.
 | Root cause | `dao::orders::MoveTo(creature, point)` does not move the named creature: it calls `GameModeExplore::MoveTo`, whose move order (verified in `extern/DAOLib/dev/PARTY.md`, "Orders to the selected") **orders the controlled creature and the selected party members into formation**. The puppet mirror used it every 20 frames, so each game's mirror walked the local player toward the other player's position — the "stuck together / teleported back" the owner saw. The earlier `applied` counter only counted `SetPosition`, so the tests that passed had missed it. Found by Codex in a read-only review, then confirmed in the DAOLib notes. |
 | Fix | The puppet now walks with a creature-specific script command: `CommandMoveToLocation` + `AddCommand` (`dao::script::OwnedCommand`, `*move.get()`); the loop is unchanged otherwise. The mirrored companion gets `SetFollowPartyLeader(id, 0)` once, so the engine's follow no longer fights the network position. The guest's hostile mirror skips any id that is the local controlled/own creature, and `ClearStalePuppetCommands` refuses those ids too. |
 | Tests | `walk-test` (the copy walks with its movement controller, `puppet_walks` grows), `apart-test` (both walk opposite ways; both `applied` 0; the distance grows; each copy follows), `independence-test` and `same-avatar-test` — **PASS on the 0.7.9 release build**. New `tools\play-coop.ps1` starts a real two-window session (host loads and serves, guest joins and takes index 1, no test drive) and was run once: host in the world, guest joined, windows arranged. |
+## Round 27 — the regression the group move needed, and stale-world state (2026-10-23)
+
+| Item | Evidence |
+|---|---|
+| The direct regression | New `tools\host-still-test.ps1`: the **host stands still** (no drive) while the guest walks its creature for 65 s. **PASS**: the host's own position drifts < 0.5 m (a party group move would have dragged it), both `applied` counters stay 0, the host's copy of the guest walks (`puppet_walks`), and both copies stay within 2 m of their owners. This is the exact symptom ("moving one player moves the other") now covered by a test. |
+| Stale world | `ResetHandoffForResync` (host) and `ResetGuestJoinForResync` (guest) now also forget the remote state: `g_haveRemote = false`, the packet zeroed, the puppet id/moves/distance cleared (the host also clears the follow-off choice) — an old packet cannot move anything in the new world after a save load or a rejoin. |
+| Release | `dao-coop-0.7.10.zip`, deployed to the test install; `host-still-test`, `walk-test`, `apart-test`, `independence-test` and `same-avatar-test` run on the release build. |
 ## Next actions
 
-1. Owner: update to 0.7.9 and start with `tools\play-coop.ps1` (do not start the two games by hand: both would read the same host ini).
-2. If the two players still converge, send both `daocoop.log` files and the `net role=` lines (they show the ids and the applied counters).
+1. Owner: update to 0.7.10 and start with `tools\play-coop.ps1`; walk apart and watch that the other character stays put.
+2. If it still converges, send both `daocoop.log` files (the `net role=` lines show the ids, applied and puppet counters).
 3. Event Log scrolling; area transitions; host/join menu; internet transport; effects/loot sync.
 4. Review and merge PR #141 in coop-anything.
 

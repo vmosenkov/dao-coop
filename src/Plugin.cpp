@@ -569,6 +569,12 @@ void ResetHandoffForResync()
     g_demoStarted = false;
     g_demoOrdered = false;
     g_fightSeen = false;
+    // The old world's packets must not move anything in the new one.
+    g_haveRemote = false;
+    g_remote = coop::StatePacket{};
+    g_puppetId = dao::kInvalidObject;
+    g_puppetMoves = 0;
+    g_puppetDistance = 0.0F;
     spdlog::info("handoff: the host loaded another save; saving and serving the new world for the guest");
 }
 
@@ -592,6 +598,13 @@ void ResetGuestJoinForResync()
         const std::lock_guard<std::mutex> lock(g_receivedMutex);
         g_receivedFiles.clear();
     }
+    // The old world's packets must not move anything in the new one.
+    g_haveRemote = false;
+    g_remote = coop::StatePacket{};
+    g_puppetId = dao::kInvalidObject;
+    g_puppetMoves = 0;
+    g_puppetDistance = 0.0F;
+    g_followOffPuppet = dao::kInvalidObject;
     spdlog::info("join: the host loaded another save; reconnecting to the new world");
 }
 
@@ -2532,6 +2545,7 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
     dao::OnFrame(&Frame);
     return true;
 }
+
 
 
 
