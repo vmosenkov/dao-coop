@@ -17,7 +17,7 @@
 #>
 [CmdletBinding()]
 param(
-    [string] $Version = '0.7.1',
+    [string] $Version = '0.7.2',
     [switch] $SkipBuild
 )
 
@@ -63,6 +63,7 @@ Remove-Item -Recurse -Force $stage
 
 Write-Host "packaged: $zip"
 Get-Item $zip | ForEach-Object { Write-Host ("  {0:N1} MB" -f ($_.Length / 1MB)) }
+
 
 
 

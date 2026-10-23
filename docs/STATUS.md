@@ -257,11 +257,18 @@ Draft pending the owner's review.
 | Host and guest stuck together | Root cause: a guest with no `select_party` controlled the host's own Warden, so the mirror kept rewriting its position to the host's (`applied` grew, distance stayed ~0, "teleported back"). A guest now takes party index 1 by default when nothing is configured (`party: the guest will take party index 1 by default`). `independence-test` proves it: host `0x7a` and guest `0x211c`, the guest's mirrored `applied` stays 0 (its position is not rewritten), the standing host and the walking guest get 2.14 m apart, and the host's copy of the guest follows at 1.12 m. |
 | Buffer bug found on the way | The pending-packet buffer was `sizeof(StatePacket)` (176) while the new event packet is 232: writing it overflowed the transport state. It is now `sizeof(EventPacket)`; the receive loop reports `dropped 0` again. |
 | Tests | `independence-test` **PASS** on debug. `sync-test`, `join-test` and `two-avatar-test` were adapted (mirror distance instead of the distance between two different avatars; optional companion on the new save) and **PASS**. `combat-test` still fails on the new save: the artificial ogre made by `CreateObject` is not returned by the hostility query there (the real fight path is covered by `attack-test`, `walk-test` and `demo-fight`). |
+## Round 19 — quieter combat log and the full scripted suite (2026-10-23)
+
+| Item | Evidence |
+|---|---|
+| Combat log spam | "Combat ended" is now written only after five seconds without a living hostile (a 150-frame hysteresis), so a hostile that steps out of sight for a moment no longer produces a started/ended pair every couple of seconds. One fight = one pair of lines. |
+| Suite | `tools\run-suite.ps1` (one process per test, so the Win32 `Add-Type` declarations do not collide) ran: `independence-test`, `walk-test`, `attack-test`, `death-test`, `reload-test`, `ui-menu-test` **PASS**; `ui-shot` passed in substance but printed no verdict — it now prints `VERDICT: PASS` when the screen was shown and the screenshot exists. |
+| Still known | The artificial-ogre `combat-test` does not pass on the Fort Drakon save (an inactive `CreateObject` ogre is not returned by the hostility query there); the real fight path is covered by `attack-test`, `walk-test` and `demo-fight`. |
 ## Next actions
 
-1. Rebuild the release package with this round's fixes and re-run independence-test and walk-test on it.
-2. Owner playtest: a real session with two characters, then two PCs on the LAN.
-3. Event Log UX: scrolling history and event details; verify the filter tabs by hand.
-4. Replicate combat animations/effects; area transitions; host/join menu; internet transport.
-5. Review and undraft PR #141 in coop-anything (add this round's findings).
+1. Rebuild the release package with this round's hysteresis change and the ui-shot verdict.
+2. Owner playtest: two characters on one PC, then two PCs on the LAN; report what still differs visually.
+3. Event Log UX: scrolling history and event details; verify filter tabs by hand.
+4. Combat animations/effects replication; area transitions; host/join menu; internet transport.
+5. Review and undraft PR #141 in coop-anything.
 

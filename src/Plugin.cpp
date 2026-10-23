@@ -213,6 +213,7 @@ bool g_hostileDeathAnnounced = false;
 // "combat started"/"combat ended" transition for the alive-hostile count.
 std::map<dao::ObjectId, std::uint64_t> g_lastAttackLog;
 bool g_combatSeen = false;
+std::uint64_t g_lastFightFrame = 0; // the last frame a living hostile was seen
 // Test hook: after the guest has joined, load another save on the host to
 // exercise the guest's automatic rejoin.
 bool g_testReload = false;
@@ -1470,12 +1471,19 @@ void NetFrame()
                         ++aliveHostiles;
                     }
                 }
-                if (aliveHostiles > 0 && !g_combatSeen)
+                // One fight is one pair of lines: "ended" only after five
+                // seconds without a living hostile, so a hostile that steps out
+                // of sight for a moment does not spam the log.
+                if (aliveHostiles > 0)
                 {
-                    Notify(coop::EventCategory::Combat, "Combat started");
-                    g_combatSeen = true;
+                    g_lastFightFrame = dao::FrameCount();
+                    if (!g_combatSeen)
+                    {
+                        Notify(coop::EventCategory::Combat, "Combat started");
+                        g_combatSeen = true;
+                    }
                 }
-                else if (aliveHostiles == 0 && g_combatSeen)
+                else if (g_combatSeen && dao::FrameCount() - g_lastFightFrame > 150)
                 {
                     Notify(coop::EventCategory::Combat, "Combat ended");
                     g_combatSeen = false;
@@ -2370,6 +2378,7 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
     dao::OnFrame(&Frame);
     return true;
 }
+
 
 
 
