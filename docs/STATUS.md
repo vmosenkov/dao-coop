@@ -275,10 +275,16 @@ Draft pending the owner's review.
 | Item | Evidence |
 |---|---|
 | LAN transport | `tools\independence-test.ps1 -PeerIp 192.168.56.1` (a non-loopback address of this machine; both peers bind `0.0.0.0` and send to `192.168.56.1`) **PASS**: the guest joined and loaded the host's save, the two controlled ids stayed different, the guest was not repositioned by the mirror (`applied` 0), the event packet carried both join lines to both logs (`dropped 0` on both sides). Logs: `net: role host listening on 0.0.0.0:45830 sending to 192.168.56.1:45831` and the guest's mirror line. Two physical PCs are still untested (only this machine's LAN address is exercised). |
+## Round 22 — one-command install for both players (2026-10-23)
+
+| Item | Evidence |
+|---|---|
+| Installer | `tools\install.ps1`: checks the game folder (a `daorigins.exe`), extracts `dao-coop-*.zip` over it, writes `daocoop.ini` for the chosen role (host: handoff/autoload/companion; guest: join/select_party and the host's `-PeerIp`), backs up an existing ini, prints the firewall ports and never deletes anything. Without `-Apply` it prints the plan only. |
+| In the release | `tools\package.ps1` now puts `install.ps1` into the zip; `dao-coop-0.7.4.zip` (7.0 MB) holds `install.ps1`, `README-INSTALL.txt`, `daocoop.ini.example`, the loader, address files and the plugin with its movie. `README-INSTALL.txt` has a "Quick install" section, and the project README an "Installing for two players" section. |
+| Tested | On a scratch folder with a dummy `daorigins.exe`: dry run prints the plan and writes nothing; `-Apply` extracts the release and writes a host ini; a second run with `-Role guest -PeerIp 192.168.56.1` backs the ini up and writes the guest one (verified file tree, ini contents and the `.bak`). The real game folders were not touched. |
 ## Next actions
 
-1. Owner playtest: two PCs on the LAN (firewall: UDP 45830/45831, TCP 45832), then the internet transport.
-2. Event Log UX scrolling; event details; check the copy's swings by eye.
-3. Area transitions; host/join menu; effects/animations beyond the swing.
-4. Review and undraft PR #141 in coop-anything (add the LAN re-verification).
+1. Owner: install 0.7.4 on both PCs with `install.ps1` (host + guest roles), open the firewall ports, and play.
+2. Event Log UX scrolling; event details; area transitions; host/join menu; internet transport.
+3. Review and undraft PR #141 in coop-anything (mention the installer).
 

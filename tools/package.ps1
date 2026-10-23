@@ -17,7 +17,7 @@
 #>
 [CmdletBinding()]
 param(
-    [string] $Version = '0.7.3',
+    [string] $Version = '0.7.4',
     [switch] $SkipBuild
 )
 
@@ -55,6 +55,7 @@ Copy-Item (Join-Path $build 'daolib\plugins\daocoop\coop_eventlog.swf') $plugin 
 Copy-Item (Join-Path $build 'daolib\addresses\*.bin') (Join-Path $ship 'daolib\addresses')
 Copy-Item (Join-Path $repo 'daocoop.ini.example') $stage
 Copy-Item (Join-Path $repo 'tools\README-INSTALL.txt') $stage
+Copy-Item (Join-Path $repo 'tools\install.ps1') $stage
 
 $zip = Join-Path $dist "dao-coop-$Version.zip"
 if (Test-Path $zip) { Remove-Item $zip -Force }
@@ -63,6 +64,7 @@ Remove-Item -Recurse -Force $stage
 
 Write-Host "packaged: $zip"
 Get-Item $zip | ForEach-Object { Write-Host ("  {0:N1} MB" -f ($_.Length / 1MB)) }
+
 
 
 

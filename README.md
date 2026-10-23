@@ -75,4 +75,15 @@ draft for the owner's review.
 ## Licence
 
 GPLv3, as DAOLib (the plugin compiles the library in).
+## Installing for two players
 
+The release zip carries install.ps1. Run it on each PC with that PC's role; it
+extracts the release over the game folder and writes daocoop.ini (an existing
+one is backed up). Without -Apply it only prints the plan.
+
+`powershell
+.\install.ps1 -GameDir "<game dir>" -Role host -Apply
+.\install.ps1 -GameDir "<game dir>" -Role guest -PeerIp <host LAN address> -Apply
+`
+
+Firewall on the host PC: UDP 45830 and TCP 45832 in; on the guest: UDP 45831 in.
