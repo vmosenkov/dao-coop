@@ -277,6 +277,20 @@ the other arriving in the event packet).
 **Verified 2026-10-23 (PASS):** host `0x0000007a`, guest `0x0000211c`,
 guest applied 0, furthest distance 2.14 m, host puppet distance 1.12 m, both
 logs hold "Another player joined the game" and "Joined the host's game".
+## Diagnostics — what each game plays (DAOLib 0.6.0)
+
+```powershell
+$env:DAOCOOP_TRACE_ANIM = '1'    # base-layer animations of the avatar, mirror and tracked hostile
+$env:DAOCOOP_TRACE_SOUND = '1'   # sound events the game starts (first 400)
+```
+
+Both run two game clients as usual; the lines go to each instance's `daocoop.log`
+(`anim: frame … clock … 0x… row … speed … blend …` and `sound: frame … [name]
+(position)`). They are diagnostics only: nothing is replayed and the game is not
+affected. Compare the two logs when a visual desync shows up; row 107 is the
+generic attack animation, row 1 the idle. In `tools\demo-fight.ps1` a 35 s fight
+gave the host 53 animation and 400 sound lines, the guest 39 and 400.
+
 ## Automated rig (later)
 
 `DAOEluvianMCP` (public, GPLv3) is the intended bench: it drives a live game

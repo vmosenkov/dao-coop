@@ -42,3 +42,9 @@ autoload = 0
 drive = 0
 # Host: spawn an inactive ogre and mirror its health (milestone-5 test).
 combat_test = 0
+
+# Both (DAOLib 0.6.0 callbacks): log the base-layer animations the game plays
+# for the mirrored creatures and the sound events it starts, to daocoop.log.
+# Diagnostics only: nothing is replayed. Off by default.
+trace_anim = 0
+trace_sound = 0

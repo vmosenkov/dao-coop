@@ -179,3 +179,15 @@ Real combat arbitration, a UI beyond the ini and area transitions are ahead.
 9. **Unknown: does a guest's game tolerate its characters being driven
    remotely** (pathing, animations, command queue)? M2 answers it.
 10. **Unknown: pause/dialogue arbitration** beyond v1 policy.
+
+## Events: the reviewed alternative (2026-10-23)
+
+The Witness co-op write-up in coop-anything (commit 5b86e5b) describes a reliable
+event layer: numbered events, acknowledgements, resends, an echo guard and a
+resync after a restart or a save reload. For this mod's session log it is not
+needed: a line is informational (a lost line costs one line), the receive path
+adds remote lines without ever forwarding them (so there is no echo), and the
+log is not state the guest depends on — the guest's rejoin path already reloads
+the host's world with the save. The attack channel keeps its own request ids and
+retries. If combat effects (hits, deaths, loot) are later replicated as state,
+this layered approach is the model to follow.

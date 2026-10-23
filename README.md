@@ -9,7 +9,9 @@ actually been run.
   game processes**, a host that owns the simulation and a guest that follows
   it, joined by transferring the host's save and then syncing state.
 - The plugin is 32-bit C++20, built with VS 2022 + CMake + vcpkg, and loaded
-  from `bin_ship\daolib\plugins\daocoop\`.
+  from `bin_ship\daolib\plugins\daocoop\`. DAOLib is a submodule pinned at
+  `v0.6.0` (with its DAOAddressLibrary 0.6.0); `dao::animation::OnPlayed` and
+  `dao::audio::OnEventStart` drive the optional diagnostics below.
 - Milestone 0 (this repository's first rung): load in-game and log the
   controlled creature and party state once a second. That proves the loader,
   the plugin API and live engine reads before any networking exists.

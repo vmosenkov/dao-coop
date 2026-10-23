@@ -282,9 +282,18 @@ Draft pending the owner's review.
 | Installer | `tools\install.ps1`: checks the game folder (a `daorigins.exe`), extracts `dao-coop-*.zip` over it, writes `daocoop.ini` for the chosen role (host: handoff/autoload/companion; guest: join/select_party and the host's `-PeerIp`), backs up an existing ini, prints the firewall ports and never deletes anything. Without `-Apply` it prints the plan only. |
 | In the release | `tools\package.ps1` now puts `install.ps1` into the zip; `dao-coop-0.7.4.zip` (7.0 MB) holds `install.ps1`, `README-INSTALL.txt`, `daocoop.ini.example`, the loader, address files and the plugin with its movie. `README-INSTALL.txt` has a "Quick install" section, and the project README an "Installing for two players" section. |
 | Tested | On a scratch folder with a dummy `daorigins.exe`: dry run prints the plan and writes nothing; `-Apply` extracts the release and writes a host ini; a second run with `-Role guest -PeerIp 192.168.56.1` backs the ini up and writes the guest one (verified file tree, ini contents and the `.bak`). The real game folders were not touched. |
+## Round 23 — DAOLib 0.6.0, diagnostics, and the reviewed references (2026-10-23)
+
+| Item | Evidence |
+|---|---|
+| DAOLib 0.6.0 | The submodule moved from `v0.5.0-142` to `v0.6.0` (commit 2621ebe) and its DAOAddressLibrary submodule to 0.6.0 (78c0006). The project builds unchanged (`tools\build.ps1 -Preset debug`), and `independence-test` and `attack-test` **PASS** on it (release build too: `independence-test` PASS after the package). `tools\README-INSTALL.txt` now names DAOLib 0.6.0 and the latest x86 Visual C++ Redistributable. |
+| Diagnostics | New optional callbacks, logging only (nothing is replayed): `DAOCOOP_TRACE_ANIM=1` logs every base-layer animation the game plays for this game's avatar, the mirrored creature or the tracked hostile (`anim: frame … clock … 0x… row … speed …`), with `dao::clock::Now()` as the world clock; `DAOCOOP_TRACE_SOUND=1` logs the sound events the game starts (`sound: frame … [name] (x, y, z)`), capped at 400. Verified in a demo fight: 53 animation lines and 400 sound lines on the host, 39 and 400 on the guest, including row 107 (the attack animation) on the guest's copy. Config: `daocoop.ini.example`'s `[test]` section. |
+| Reviewed, not adopted | **`dao::scene`** (object/scene-node/matrix tree) is on DAOLib's main branch but **not in v0.6.0**, so it is not in the build; it may help the puppet/controlled-creature comparison later. **The Witness** write-up in coop-anything describes a reliable event layer (numbered, acknowledged, resent, echo guard, resync after restart) — for the event log it is not needed (lines are informational, a lost line costs one line, and received events are never forwarded, so there is no echo); the attack channel already has request ids with retries. **DAOTurnBased's** "no fight in turns: the gate asks the engine nothing" fix is only on its main branch, not in tag v0.3.0; this mod does not use it, but a player who runs both should update the turn-based mod too. |
+
 ## Next actions
 
-1. Owner: install 0.7.4 on both PCs with `install.ps1` (host + guest roles), open the firewall ports, and play.
-2. Event Log UX scrolling; event details; area transitions; host/join menu; internet transport.
-3. Review and undraft PR #141 in coop-anything (mention the installer).
-
+1. Owner playtest on 0.7.5 (two characters on one PC, then two PCs).
+2. Compare the `anim:`/`sound:` diagnostics of the two games in a real session when a desync shows up.
+3. Event Log scrolling; area transitions; host/join menu; internet transport; effects/loot sync.
+4. Re-check `dao::scene` when DAOLib releases it.
+5. Review and merge PR #141 in coop-anything.
