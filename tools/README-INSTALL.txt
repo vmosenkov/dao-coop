@@ -56,6 +56,11 @@ writes it into a manual slot of the character it finds in your profile, loads
 it, and puts you in the host's world controlling the companion. Open UDP
 45831 on the guest PC's firewall.
 
+Both players must control DIFFERENT creatures: the guest's select_party = 1 takes
+the companion (the installer writes it). If both end up on the same Warden, the
+mod now leaves each player's position alone and writes one warning, but the two
+games still share one creature; set select_party = 1 to play properly.
+
 Testing both copies on one PC
 -----------------------------
 Two game processes only run side by side as DAOLib named instances: start each
@@ -102,5 +107,6 @@ instance writes them under its own profile).
 
 Source and issues: https://github.com/vmosenkov/dao-coop (GPL-3.0). It builds
 on DAOLib by Whocares66-Dev, GPL-3.0.
+
 
 

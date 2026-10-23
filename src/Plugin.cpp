@@ -206,6 +206,7 @@ std::string CreatureName(dao::ObjectId id)
 // Session bookkeeping for those events.
 bool g_sawRemote = false;
 bool g_connectionLost = false;
+bool g_sharedCreatureWarned = false; // the guest ended up on the host's own creature
 std::uint64_t g_lastRemoteFrame = 0;
 std::uint64_t g_worldReloadFrames = 0;
 bool g_worldReloadNoticed = false;
@@ -1800,17 +1801,16 @@ void NetFrame()
         }
         else if (g_role == Role::Guest)
         {
-            const float dx = g_remote.x - localPosition.x;
-            const float dy = g_remote.y - localPosition.y;
-            const float dz = g_remote.z - localPosition.z;
-            if (std::sqrt((dx * dx) + (dy * dy) + (dz * dz)) > kApplyTolerance)
+            // Both games control the same creature, which means the guest did not
+            // take a party member of its own. Teleporting its creature to the
+            // host's position here is exactly the "stuck together / teleported
+            // back" behaviour the owner reported: leave the guest's own creature
+            // alone and say so once.
+            if (!g_sharedCreatureWarned)
             {
-                dao::Vector target{};
-                target.x = g_remote.x;
-                target.y = g_remote.y;
-                target.z = g_remote.z;
-                dao::script::api::SetPosition(avatar, target);
-                ++g_applied;
+                g_sharedCreatureWarned = true;
+                Notify(coop::EventCategory::System,
+                       "Both players control the same creature; the guest should select another party member");
             }
         }
     }
@@ -2439,6 +2439,7 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
     dao::OnFrame(&Frame);
     return true;
 }
+
 
 
 

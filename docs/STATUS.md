@@ -290,10 +290,17 @@ Draft pending the owner's review.
 | Diagnostics | New optional callbacks, logging only (nothing is replayed): `DAOCOOP_TRACE_ANIM=1` logs every base-layer animation the game plays for this game's avatar, the mirrored creature or the tracked hostile (`anim: frame … clock … 0x… row … speed …`), with `dao::clock::Now()` as the world clock; `DAOCOOP_TRACE_SOUND=1` logs the sound events the game starts (`sound: frame … [name] (x, y, z)`), capped at 400. Verified in a demo fight: 53 animation lines and 400 sound lines on the host, 39 and 400 on the guest, including row 107 (the attack animation) on the guest's copy. Config: `daocoop.ini.example`'s `[test]` section. |
 | Reviewed, not adopted | **`dao::scene`** (object/scene-node/matrix tree) is on DAOLib's main branch but **not in v0.6.0**, so it is not in the build; it may help the puppet/controlled-creature comparison later. **The Witness** write-up in coop-anything describes a reliable event layer (numbered, acknowledged, resent, echo guard, resync after restart) — for the event log it is not needed (lines are informational, a lost line costs one line, and received events are never forwarded, so there is no echo); the attack channel already has request ids with retries. **DAOTurnBased's** "no fight in turns: the gate asks the engine nothing" fix is only on its main branch, not in tag v0.3.0; this mod does not use it, but a player who runs both should update the turn-based mod too. |
 
+## Round 24 — "stuck together" fixed for the same-creature configuration (2026-10-23)
+
+| Item | Evidence |
+|---|---|
+| Root cause | The guest's mirror had a branch for `remote creature == the guest's own creature` that teleported the guest's creature to the host's position on every state packet. That branch runs when both games control the same Warden — the guest did not take a party member of its own (`select_party = 0`, or a build before the guest's automatic party pick). It is the "teleported back when walking away" the owner reported. |
+| Fix | The branch no longer moves anything: the guest's own creature is left alone and the plugin writes one System event: "Both players control the same creature; the guest should select another party member". The normal two-creature path is untouched. |
+| Tests | New `tools\same-avatar-test.ps1` (host + guest join; the guest explicitly takes index 0, i.e. the host's Warden; both drive): **PASS** — `local == remote` (the bug configuration), the guest's `applied` is **0** (its position is never rewritten), it walks away (furthest distance over the threshold) and the warning is logged. `independence-test` (two creatures) still **PASS**. |
 ## Next actions
 
-1. Owner playtest on 0.7.5 (two characters on one PC, then two PCs).
-2. Compare the `anim:`/`sound:` diagnostics of the two games in a real session when a desync shows up.
+1. Rebuild the release package with this fix and re-run same-avatar-test and independence-test on it.
+2. Owner: update both PCs to the new release; the guest should use select_party = 1 (the installer writes it), otherwise the new warning explains the same-creature case.
 3. Event Log scrolling; area transitions; host/join menu; internet transport; effects/loot sync.
-4. Re-check `dao::scene` when DAOLib releases it.
-5. Review and merge PR #141 in coop-anything.
+4. Review and merge PR #141 in coop-anything.
+
