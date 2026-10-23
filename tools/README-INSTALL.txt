@@ -63,6 +63,15 @@ games still share one creature; set select_party = 1 to play properly.
 
 Testing both copies on one PC
 -----------------------------
+On one PC, start both games with the repository's script:
+
+  E:\DAO-Coop-Test\tools\play-coop.ps1
+
+It passes each game its own role and settings (host: load and serve; guest: join and
+take index 1) and arranges the two windows. Do not start the two games by hand:
+both would read the same daocoop.ini (a host test config) and the guest would never
+join. Stop them with play-coop.ps1 -StopAll.
+
 Two game processes only run side by side as DAOLib named instances: start each
 with the environment variable DAOLIB_INSTANCE set to a different name
 (host/guest). Each instance gets its own Documents profile under
@@ -107,6 +116,7 @@ instance writes them under its own profile).
 
 Source and issues: https://github.com/vmosenkov/dao-coop (GPL-3.0). It builds
 on DAOLib by Whocares66-Dev, GPL-3.0.
+
 
 
 

@@ -89,6 +89,7 @@ bool g_loadRequested = false;
 Role g_role = Role::None;
 bool g_drive = false;
 bool g_driveAway = false; // test: host and guest walk in opposite directions
+std::uint64_t g_nextControlFixFrame = 0;
 coop::Transport g_net;
 std::uint16_t g_hostPort = 45830;
 std::uint16_t g_guestPort = 45831;
@@ -208,6 +209,7 @@ std::string CreatureName(dao::ObjectId id)
 bool g_sawRemote = false;
 bool g_connectionLost = false;
 bool g_sharedCreatureWarned = false; // the guest ended up on the host's own creature
+dao::ObjectId g_followOffPuppet = dao::kInvalidObject; // the mirrored creature told not to follow
 std::uint64_t g_lastRemoteFrame = 0;
 std::uint64_t g_worldReloadFrames = 0;
 bool g_worldReloadNoticed = false;
@@ -851,6 +853,46 @@ void SelectPartyMember()
     }
 }
 
+// The game can move control to another party member (a death, a script, a
+// cutscene). The mirror must never drive the creature this player controls now,
+// so put control back on this player's creature while it is alive.
+void KeepOwnCreatureControl()
+{
+    if (g_role == Role::None || !InWorld() || g_myAvatar == dao::kInvalidObject)
+    {
+        return;
+    }
+    if (dao::FrameCount() < g_nextControlFixFrame)
+    {
+        return;
+    }
+    g_nextControlFixFrame = dao::FrameCount() + 60;
+    const dao::ObjectId now = dao::party::Controlled();
+    if (now == dao::kInvalidObject || now == g_myAvatar)
+    {
+        return;
+    }
+    dao::CClientExoApp *app = dao::CClientExoApp::Get();
+    if (app == nullptr)
+    {
+        return;
+    }
+    const dao::CCCreature *mine = app->GetCreatureById(g_myAvatar);
+    if (mine == nullptr || mine->Health().value_or(0.0F) <= 0.0F)
+    {
+        return; // a fallen creature gets control back after the revive path
+    }
+    const dao::script::Array party = dao::script::api::GetPartyList(dao::kInvalidObject);
+    for (std::size_t i = 0; i < party.Size(); ++i)
+    {
+        if (party.Object(i) == g_myAvatar)
+        {
+            SendPartyIndex("control back to this player's creature at", static_cast<int>(i), 0);
+            return;
+        }
+    }
+}
+
 // Milestone 5 host: put a hostile creature into the world before the handoff
 // save, far enough away not to start a fight in either game. The guest gets it
 // with the save, and the host's copy is the authority for its health.
@@ -1378,6 +1420,11 @@ void ClearStalePuppetCommands(std::uint64_t frame)
     {
         return;
     }
+    if (g_remote.objectId == dao::party::Controlled() ||
+        (g_myAvatar != dao::kInvalidObject && g_remote.objectId == g_myAvatar))
+    {
+        return;
+    }
     next = frame + 150;
     if (FightNear())
     {
@@ -1700,7 +1747,7 @@ void NetFrame()
       if (!waitingForOwnCreature && g_haveRemote && g_remote.areaId == local->AreaId() &&
           g_remote.objectId != dao::kInvalidObject)
     {
-        if (g_remote.objectId != avatar)
+        if (g_remote.objectId != avatar && g_remote.objectId != controlled)
         {
             const dao::CCCreature *puppet = app->GetCreatureById(g_remote.objectId);
             if (puppet != nullptr)
@@ -1711,6 +1758,13 @@ void NetFrame()
                 const float dz = g_remote.z - puppetPosition.z;
                 const float distance = std::sqrt((dx * dx) + (dy * dy) + (dz * dz));
                 g_puppetId = g_remote.objectId;
+                if (g_followOffPuppet != g_remote.objectId)
+                {
+                    // The engine would walk the mirrored companion toward this
+                    // game's leader, fighting the network position.
+                    dao::script::api::SetFollowPartyLeader(g_remote.objectId, 0);
+                    g_followOffPuppet = g_remote.objectId;
+                }
                 g_puppetDistance = distance;
                 // A creature must not be teleported back to the other game's
                 // position during its swing, or its blow never lands; the skip
@@ -1743,7 +1797,19 @@ void NetFrame()
                         if (now >= g_puppetMoveFrame)
                         {
                             g_puppetMoveFrame = now + 20;
-                            dao::orders::MoveTo(g_remote.objectId, target);
+                            // orders::MoveTo is the engine's party group move: it
+                            // orders the controlled creature too, which is why both
+                            // players walked together. A script command names the
+                            // puppet itself.
+                            dao::CScriptLocation location{};
+                            location.position = target;
+                            location.area = g_remote.areaId;
+                            dao::script::OwnedCommand move =
+                                dao::script::api::CommandMoveToLocation(location, 1, 0);
+                            if (move)
+                            {
+                                dao::script::api::AddCommand(g_remote.objectId, *move.get(), 0, 0);
+                            }
                             ++g_puppetMoves;
                             ++g_puppetWalks;
                         }
@@ -1824,8 +1890,11 @@ void NetFrame()
         for (std::uint32_t i = 0; i < g_remote.hostileCount && i < coop::kMaxHostiles; ++i)
         {
             const coop::HostileEntry &entry = g_remote.hostiles[i];
-            if (entry.id == dao::kInvalidObject)
+            if (entry.id == dao::kInvalidObject || entry.id == controlled ||
+                (g_myAvatar != dao::kInvalidObject && entry.id == g_myAvatar))
             {
+                // Never the creature this game controls (the host's table could
+                // match it after a mismatched load).
                 continue;
             }
             const dao::CCCreature *hostile = app->GetCreatureById(entry.id);
@@ -2096,6 +2165,9 @@ void Frame()
 
     NetFrame();
 
+    // Keep this player on its own creature, so the mirror never drives the one
+    // it controls now.
+    KeepOwnCreatureControl();
     // Settle the mirrored creature when the fight is over (see the comment on
     // ClearStalePuppetCommands).
     ClearStalePuppetCommands(frame);
@@ -2460,6 +2532,12 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
     dao::OnFrame(&Frame);
     return true;
 }
+
+
+
+
+
+
 
 
 
