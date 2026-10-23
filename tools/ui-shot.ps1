@@ -114,6 +114,13 @@ if (Test-Path $log) {
     if (-not (Get-Content $log | Where-Object { $_ -match 'ui: ' })) { Write-Host '  (no ui: lines: the screen was not added)' }
 }
 
+$shown = (Test-Path $log) -and ((Get-Content $log -Raw) -match 'ui: event log screen shown')
+if ($shown -and (Test-Path $shot)) {
+    Write-Host 'VERDICT: PASS - the event log screen is shown in the session'
+} else {
+    Write-Host 'VERDICT: FAIL - the screen was not shown or the screenshot is missing'
+}
+
 if ($Close) {
     Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
     Write-Host 'instance stopped'
