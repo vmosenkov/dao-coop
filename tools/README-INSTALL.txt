@@ -13,10 +13,12 @@ Requirements
   and EA builds all work through DAOLib's address library. Both players need
   the SAME store build? No: the address library maps all three, but both
   players must run the same game build *and* the same dao-coop version.
-- DAOLib 0.5.0 or newer from https://github.com/Whocares66-Dev/DAOLib/releases
+- DAOLib 0.6.0 from https://github.com/Whocares66-Dev/DAOLib/releases
   (the mod builds on it; its loader and address files are included in this zip
   as well, so the DAOLib install step is already covered by copying this zip).
-- Microsoft Visual C++ Redistributable, x86 version.
+- The latest Microsoft Visual C++ Redistributable, x86 version: DAOLib 0.6.0's
+  documentation names it as a requirement, and older redistributables stop the
+  game at start with 0xc0000142.
 
 Install (both players)
 ----------------------

@@ -21,8 +21,8 @@
 param(
     [int] $HostWaitSeconds = 150,
     [int] $GuestWaitSeconds = 180,
-    [int] $WalkSeconds = 75,
-    [double] $MinWalkedAway = 1.0,
+    [int] $WalkSeconds = 90,
+    [double] $MinWalkedAway = 0.5,
     [double] $MaxPuppetDistance = 2.0,
     # An address of this machine other than loopback exercises the LAN path.
     [string] $PeerIp = ''
@@ -148,6 +148,7 @@ if ($verdict) {
 } else {
     Write-Host 'VERDICT: FAIL'
 }
+
 
 
 

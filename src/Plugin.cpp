@@ -31,6 +31,8 @@
 #include <Windows.h>
 
 #include "dao/Animation.h"
+#include "dao/Audio.h"
+#include "dao/Clock.h"
 #include "dao/ClientExoApp.h"
 #include "dao/CommandEvents.h"
 #include "dao/Frame.h"
@@ -215,6 +217,12 @@ bool g_hostileDeathAnnounced = false;
 std::map<dao::ObjectId, std::uint64_t> g_lastAttackLog;
 bool g_combatSeen = false;
 std::uint64_t g_lastFightFrame = 0; // the last frame a living hostile was seen
+// Diagnostics off by default (0.6.0 callbacks): log the base-layer animations and
+// sound events the game starts for the creatures this session mirrors.
+bool g_traceAnim = false;
+bool g_traceSound = false;
+std::uint64_t g_animEvents = 0;
+std::uint64_t g_soundEvents = 0;
 // Test hook: after the guest has joined, load another save on the host to
 // exercise the guest's automatic rejoin.
 bool g_testReload = false;
@@ -2204,6 +2212,8 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
     g_testPause = Flag("test_pause", "DAOCOOP_TEST_PAUSE");
     g_testReload = Flag("test_reload", "DAOCOOP_TEST_RELOAD");
     g_testVictory = Flag("test_victory", "DAOCOOP_TEST_VICTORY");
+    g_traceAnim = Flag("trace_anim", "DAOCOOP_TRACE_ANIM");
+    g_traceSound = Flag("trace_sound", "DAOCOOP_TRACE_SOUND");
     g_testKillPlayer = Flag("test_kill_player", "DAOCOOP_TEST_KILL_PLAYER");
     dao::party::OnControlChanged([](dao::ObjectId before, dao::ObjectId now) {
         spdlog::info("control: 0x{:08x} -> 0x{:08x}", before, now);
@@ -2263,6 +2273,37 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
         }
     });
 
+    // Diagnostics from DAOLib 0.6.0: log what the game plays, for comparing the
+    // two machines' animations and sounds. Logging only; nothing is replayed.
+    if (g_traceAnim)
+    {
+        dao::animation::OnPlayed([](dao::ObjectId creature, std::int32_t animation, float speed, float blend, bool flag) {
+            if (creature != g_myAvatar && creature != g_remote.objectId && creature != g_hostileId)
+            {
+                return;
+            }
+            ++g_animEvents;
+            double clock = -1.0;
+            if (const auto now = dao::clock::Now())
+            {
+                clock = now->seconds;
+            }
+            spdlog::info("anim: frame {} clock {:.2f} 0x{:08x} row {} speed {:.2f} blend {:.2f} flag {} ({} total)",
+                         dao::FrameCount(), clock, creature, animation, speed, blend, flag, g_animEvents);
+        });
+    }
+    if (g_traceSound)
+    {
+        dao::audio::OnEventStart([](const dao::audio::EventStart &sound) {
+            ++g_soundEvents;
+            if (g_soundEvents > 400)
+            {
+                return;
+            }
+            spdlog::info("sound: frame {} [{}] ({:.1f}, {:.1f}, {:.1f})", dao::FrameCount(), std::string(sound.name),
+                         sound.position[0], sound.position[1], sound.position[2]);
+        });
+    }
     dao::saves::OnGameLoaded([](const std::optional<dao::saves::Slot> &loaded) {
         if (loaded)
         {
@@ -2398,6 +2439,7 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
     dao::OnFrame(&Frame);
     return true;
 }
+
 
 
 
