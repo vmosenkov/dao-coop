@@ -23,7 +23,9 @@ param(
     [int] $GuestWaitSeconds = 180,
     [int] $WalkSeconds = 75,
     [double] $MinWalkedAway = 1.0,
-    [double] $MaxPuppetDistance = 2.0
+    [double] $MaxPuppetDistance = 2.0,
+    # An address of this machine other than loopback exercises the LAN path.
+    [string] $PeerIp = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -52,6 +54,8 @@ function Wait-ForLogMatch($process, [string] $log, [string] $pattern, [int] $lim
     }
     return $false
 }
+
+if ($PeerIp) { $env:DAOCOOP_PEERIP = $PeerIp; Write-Host ("--- using the LAN address {0} ---" -f $PeerIp) }
 
 Write-Host '--- host: world + handoff, standing still ---'
 $env:DAOLIB_INSTANCE = 'host'; $env:DAOCOOP_ROLE = 'host'
@@ -144,6 +148,8 @@ if ($verdict) {
 } else {
     Write-Host 'VERDICT: FAIL'
 }
+
+
 
 
 

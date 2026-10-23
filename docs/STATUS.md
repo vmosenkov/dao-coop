@@ -270,11 +270,15 @@ Draft pending the owner's review.
 |---|---|
 | Attack animation on the copy | The host's combat lines travel to the guest in the event packet; when a line starts with the mirrored creature's name and " attacks", the guest plays DAO's own attack animation on its copy with a queued `CommandPlayAnimation` (`dao/animation::kAttack`, script command 569) placed ahead of the copy's walk order, so the swing shows and the walk continues. Verified in `tools\demo-fight.ps1`: the guest log has `puppet: attack animation for Айдан` (8 times in a 35 s fight) while the copy keeps moving (`puppet_distance` 0.19 m, `puppet_walks` still growing). Done on the guest only: the host's copy of the guest really attacks through the arbitration order and must not be interrupted. |
 | Regression | `independence-test` and `attack-test` **PASS** with the change. |
+## Round 21 — LAN path re-verified on 0.7.3 (2026-10-23)
+
+| Item | Evidence |
+|---|---|
+| LAN transport | `tools\independence-test.ps1 -PeerIp 192.168.56.1` (a non-loopback address of this machine; both peers bind `0.0.0.0` and send to `192.168.56.1`) **PASS**: the guest joined and loaded the host's save, the two controlled ids stayed different, the guest was not repositioned by the mirror (`applied` 0), the event packet carried both join lines to both logs (`dropped 0` on both sides). Logs: `net: role host listening on 0.0.0.0:45830 sending to 192.168.56.1:45831` and the guest's mirror line. Two physical PCs are still untested (only this machine's LAN address is exercised). |
 ## Next actions
 
-1. Rebuild the release package with the copy's attack animation and re-run the suite on it.
-2. Owner playtest: a real fight on both screens; check the copy's swings and the shared log.
-3. Event Log UX: scrolling (the GFx clip buttons did not render; try text-field clicks or building the controls in the SWF shell); event details.
-4. Area transitions; host/join menu; internet transport; animations of effects.
-5. Review and undraft PR #141 in coop-anything.
+1. Owner playtest: two PCs on the LAN (firewall: UDP 45830/45831, TCP 45832), then the internet transport.
+2. Event Log UX scrolling; event details; check the copy's swings by eye.
+3. Area transitions; host/join menu; effects/animations beyond the swing.
+4. Review and undraft PR #141 in coop-anything (add the LAN re-verification).
 
