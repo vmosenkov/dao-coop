@@ -813,6 +813,10 @@ void SelectPartyMember()
         {
             g_selected = true;
             g_myAvatar = wanted;
+            // Before this the guest was still on the host's Warden; the mirror
+            // counted those repositions, which would look like the old binding.
+            g_applied = 0;
+            g_puppetApplied = 0;
             spdlog::info("avatar: this player's creature is 0x{:08x}", wanted);
             return;
         }
@@ -829,6 +833,8 @@ void SelectPartyMember()
         spdlog::info("select: after the toggle, controlled 0x{:08x} (wanted 0x{:08x})", now, wanted);
         g_selected = true;
         g_myAvatar = wanted;
+        g_applied = 0;
+        g_puppetApplied = 0;
         spdlog::info("avatar: this player's creature is 0x{:08x}", wanted);
     }
 }
@@ -1652,7 +1658,9 @@ void NetFrame()
     // different party member, and each side mirrors the other player's puppet;
     // in the one-avatar tests both sides control the same creature, and only
     // the guest follows the host's word.
-    if (g_haveRemote && g_remote.areaId == local->AreaId() && g_remote.objectId != dao::kInvalidObject)
+    const bool waitingForOwnCreature = g_role == Role::Guest && !g_selected && g_selectParty >= 0;
+      if (!waitingForOwnCreature && g_haveRemote && g_remote.areaId == local->AreaId() &&
+          g_remote.objectId != dao::kInvalidObject)
     {
         if (g_remote.objectId != avatar)
         {
@@ -2362,6 +2370,7 @@ extern "C" __declspec(dllexport) bool __cdecl DAOLib_Load(const dao::LoaderInfo 
     dao::OnFrame(&Frame);
     return true;
 }
+
 
 
 
